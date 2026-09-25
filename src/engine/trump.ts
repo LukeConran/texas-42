@@ -30,7 +30,7 @@ export const TRUMP_CHOICES: Trump[] = [
   { kind: "followMe" },
 ];
 
-const SUIT_CALLS = ["blanks", "ones", "twos", "threes", "fours", "fives", "sixes"];
+const SUIT_CALLS = ["Blanks", "Ones", "Twos", "Threes", "Fours", "Fives", "Sixes"];
 
 export function trumpKey(trump: Trump): string {
   if (trump.kind === "suit") return `suit:${trump.suit}`;
@@ -42,8 +42,8 @@ export function sameTrump(a: Trump, b: Trump): boolean {
 }
 
 export function trumpName(trump: Trump): string {
-  if (trump.kind === "doubles") return "doubles";
-  if (trump.kind === "followMe") return "no trump";
+  if (trump.kind === "doubles") return "Doubles";
+  if (trump.kind === "followMe") return "No Trump";
   return SUIT_CALLS[trump.suit] ?? String(trump.suit);
 }
 

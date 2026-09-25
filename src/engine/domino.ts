@@ -37,7 +37,7 @@ export function createDeck(): Domino[] {
   return deck;
 }
 
-const SUIT_NAMES = ["blanks", "ones", "twos", "threes", "fours", "fives", "sixes"] as const;
+const SUIT_NAMES = ["Blanks", "Ones", "Twos", "Threes", "Fours", "Fives", "Sixes"] as const;
 
 export function suitName(suit: number): string {
   return SUIT_NAMES[suit] ?? String(suit);

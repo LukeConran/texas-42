@@ -83,7 +83,7 @@ export const RULES_HTML = `
 <p>The player to the left of the shaker bids first. Each player bids once. A bid is 30 through 42, and it must be higher than the bid before it. After 42, someone may bid 84 (two marks). Only after 84 can the table go to 126 or 168. If everyone passes, the tiles are shaken again and nobody scores.</p>
 <p>The high bidder names trump before leading: blanks, ones, twos, threes, fours, fives, sixes, doubles, or no trump (follow me). In the standard game the opening lead does not have to be a trump. There is a house rule in the menu if you want to require one.</p>
 <h2>Trumps and following suit</h2>
-<p>A tile that contains the trump number belongs only to trump. The other end is its rank, and the double is highest. If fours are trump, the 4-2 is a four, not a deuce. Led a deuce, you do not play the 4-2 just because it has a two.</p>
+<p>A tile that contains the trump number belongs only to trump. The other end is its rank, and the double is highest. If fours are trump, the 4-2 is a four, not a two. When a two is led, you do not play the 4-2 just because it has a two.</p>
 <p>On a trump lead, play a trump if you have one. On any other lead, the suit is the higher end, and you must play that suit if you can. If you cannot follow, you may play anything. Trump is allowed then, and it is not required. A trump beats the suit that was led. The highest trump wins if more than one is played. Otherwise the highest tile of the led suit wins, and a double is highest in its suit.</p>
 <p>When doubles are trump, the seven doubles are trump, ranked from double-six down to double-blank. They do not follow the suit of their number. In follow me there is no trump at all.</p>
 <h2>Scoring</h2>

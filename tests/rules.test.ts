@@ -15,7 +15,7 @@ import { classify, legalPlays, trumpName, winningIndex, type Trump } from "../sr
 
 const D = (hi: number, lo: number): Domino => ({ hi, lo });
 const fours: Trump = { kind: "suit", suit: 4 };
-const aces: Trump = { kind: "suit", suit: 1 };
+const ones: Trump = { kind: "suit", suit: 1 };
 const doubles: Trump = { kind: "doubles" };
 const followMe: Trump = { kind: "followMe" };
 
@@ -41,13 +41,20 @@ describe("deck and count", () => {
 });
 
 describe("trump classification", () => {
+  it("names the low suits Ones, Twos, and Threes", () => {
+    expect(trumpName({ kind: "suit", suit: 1 })).toBe("Ones");
+    expect(trumpName({ kind: "suit", suit: 2 })).toBe("Twos");
+    expect(trumpName({ kind: "suit", suit: 3 })).toBe("Threes");
+    expect(trumpName({ kind: "suit", suit: 0 })).toBe("Blanks");
+  });
+
   it("treats a trump tile as trump, not as its other end", () => {
-    const fourDeuce = classify(D(4, 2), fours);
-    expect(fourDeuce.isTrump).toBe(true);
-    expect(fourDeuce.rank).toBe(2);
-    const deuceAce = classify(D(2, 1), fours);
-    expect(deuceAce.isTrump).toBe(false);
-    expect(deuceAce.suit).toBe(2);
+    const fourTwo = classify(D(4, 2), fours);
+    expect(fourTwo.isTrump).toBe(true);
+    expect(fourTwo.rank).toBe(2);
+    const twoOne = classify(D(2, 1), fours);
+    expect(twoOne.isTrump).toBe(false);
+    expect(twoOne.suit).toBe(2);
   });
 
   it("ranks the double above every off-pip in a number suit", () => {
@@ -81,7 +88,7 @@ describe("following suit", () => {
     expect(apply(state, { type: "play", domino: D(6, 2) }).currentTrick).toHaveLength(2);
   });
 
-  it("does not force a trump four on a deuce lead", () => {
+  it("does not force a trump four on a two lead", () => {
     const hand = [D(4, 2), D(6, 6), D(2, 0)];
     const legal = legalPlays(hand, [D(2, 1)], fours);
     expect(legal.map(dominoKey)).toEqual(["2-0"]);
@@ -114,7 +121,7 @@ describe("following suit", () => {
 describe("winning the trick", () => {
   it("lets the highest trump take a non-trump lead", () => {
     const plays = [D(6, 6), D(6, 5), D(1, 0), D(6, 4)];
-    expect(winningIndex(plays, aces)).toBe(2);
+    expect(winningIndex(plays, ones)).toBe(2);
   });
 
   it("lets the double trump beat lower trumps", () => {
@@ -124,7 +131,7 @@ describe("winning the trick", () => {
 
   it("lets the led suit win when nobody trumps, with the double high", () => {
     const plays = [D(6, 5), D(6, 6), D(6, 4), D(3, 2)];
-    expect(winningIndex(plays, aces)).toBe(1);
+    expect(winningIndex(plays, ones)).toBe(1);
   });
 
   it("has no trumps in follow-me", () => {
@@ -173,7 +180,7 @@ describe("bidding", () => {
     state = apply(state, { type: "declareTrump", trump: fours });
     expect(state.phase).toBe("playing");
     expect(state.turn).toBe(state.highBidder);
-    expect(trumpName(state.trump!)).toBe("fours");
+    expect(trumpName(state.trump!)).toBe("Fours");
   });
 });
 
