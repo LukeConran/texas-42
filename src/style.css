@@ -80,10 +80,10 @@ h1, h2, h3, .brand, .scoreline strong, .result-card h2 {
 
 .play {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 280px;
+  grid-template-columns: minmax(0, 1fr) 300px;
   gap: 16px;
-  padding: 8px 18px 24px;
-  align-items: start;
+  padding: 8px 18px 88px;
+  align-items: stretch;
 }
 
 .rail {
@@ -186,6 +186,7 @@ h1, h2, h3, .brand, .scoreline strong, .result-card h2 {
   padding: 3px;
   border: 0;
 }
+.bone-xs { width: 28px; height: 50px; border-radius: 5px; padding: 2px; }
 .bone-sm { width: 34px; height: 62px; border-radius: 6px; }
 .bone-md { width: 48px; height: 90px; }
 .bone-lg { width: 62px; height: 116px; border-radius: 10px; }
@@ -216,6 +217,12 @@ h1, h2, h3, .brand, .scoreline strong, .result-card h2 {
   border-radius: 50%;
   background: radial-gradient(circle at 35% 35%, #4a433c, var(--ink) 55%);
 }
+.half i.pip-6 { background: radial-gradient(circle at 35% 30%, #ffe9a0, #e6b325 64%); }
+.half i.pip-5 { background: radial-gradient(circle at 35% 30%, #9eb6ff, #2a5fd4 64%); }
+.half i.pip-4 { background: radial-gradient(circle at 35% 30%, #c49262, #7a4e28 64%); }
+.half i.pip-3 { background: radial-gradient(circle at 35% 30%, #ff9a9a, #c62828 64%); }
+.half i.pip-2 { background: radial-gradient(circle at 35% 30%, #8ee09a, #1f8a3e 64%); }
+.half i.pip-1 { background: radial-gradient(circle at 35% 30%, #e7f7ff, #6ec4e8 64%); }
 .bone-sm .half i { width: 62%; height: 62%; }
 .count-tab {
   position: absolute;
@@ -232,6 +239,8 @@ h1, h2, h3, .brand, .scoreline strong, .result-card h2 {
   padding: 0 3px;
 }
 .bone.is-trump { box-shadow: 0 0 0 2px var(--gold), 0 8px 14px rgba(0, 0, 0, 0.28); }
+.bone.marked { box-shadow: 0 0 0 2px var(--gold); }
+.bone.locked { opacity: 0.5; pointer-events: none; }
 button.tile {
   padding: 0;
   appearance: none;
@@ -277,7 +286,65 @@ button.tile:disabled {
   padding: 4px 8px 0;
 }
 
-.side { display: flex; flex-direction: column; gap: 12px; }
+.side { display: flex; min-height: 100%; }
+.trick-board {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(244, 236, 223, 0.1);
+  border-radius: 16px;
+  padding: 12px;
+}
+.won header { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; margin-bottom: 8px; }
+.won h2 { margin: 0; font-size: 1.02rem; }
+.won header span { color: var(--muted); font-variant-numeric: tabular-nums; }
+.won.theirs h2 { color: #ffc7b2; }
+.won.ours h2 { color: var(--gold); }
+.trick-list { display: flex; flex-direction: column; gap: 8px; }
+.past-trick {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: rgba(0, 0, 0, 0.22);
+  border-radius: 10px;
+  padding: 5px 6px;
+}
+.past-trick .pts { margin-left: auto; color: var(--gold); font-size: 0.78rem; }
+.stack-gap { flex: 1; min-height: 36px; }
+.empty-tricks { margin: 0; color: var(--muted); font-size: 0.82rem; }
+.count-out { margin: 4px 0 0; color: var(--muted); font-size: 0.8rem; min-height: 1.1em; }
+.trump-badge {
+  position: fixed;
+  left: 18px;
+  bottom: 16px;
+  z-index: 8;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: #2a211b;
+  border: 1px solid rgba(230, 194, 122, 0.5);
+  border-radius: 16px;
+  padding: 8px 12px 8px 14px;
+  box-shadow: var(--shadow);
+}
+.trump-badge span {
+  display: block;
+  font-size: 0.68rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--gold);
+}
+.trump-badge strong {
+  display: block;
+  font-family: "Fraunces", Georgia, serif;
+  font-size: 1.45rem;
+  line-height: 1;
+  text-transform: capitalize;
+}
+.trump-badge.waiting strong { color: var(--muted); font-size: 1.05rem; }
+.play-row { display: flex; flex-direction: column; align-items: center; gap: 8px; }
 .panel {
   background: rgba(255, 255, 255, 0.04);
   border: 1px solid rgba(244, 236, 223, 0.1);

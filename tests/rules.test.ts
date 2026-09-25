@@ -65,6 +65,22 @@ describe("trump classification", () => {
 });
 
 describe("following suit", () => {
+  it("forces the suit when the player holds it, and rejects an off-suit play", () => {
+    const hand = [D(6, 2), D(5, 5), D(3, 3), D(6, 4)];
+    expect(legalPlays(hand, [D(6, 5)], fours).map(dominoKey)).toEqual(["6-2"]);
+    let state = scriptedPlayingHand();
+    state = {
+      ...state,
+      trump: fours,
+      turn: 1,
+      currentTrick: [{ player: 0, domino: D(6, 5) }],
+      hands: [[D(4, 4)], hand, [D(2, 2)], [D(1, 1)]],
+    };
+    expect(observe(state, 1).legalPlays.map(dominoKey)).toEqual(["6-2"]);
+    expect(() => apply(state, { type: "play", domino: D(5, 5) })).toThrow(/follow suit/);
+    expect(apply(state, { type: "play", domino: D(6, 2) }).currentTrick).toHaveLength(2);
+  });
+
   it("does not force a trump four on a deuce lead", () => {
     const hand = [D(4, 2), D(6, 6), D(2, 0)];
     const legal = legalPlays(hand, [D(2, 1)], fours);

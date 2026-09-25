@@ -13,7 +13,7 @@ const PIPS: Record<number, Array<[number, number]>> = {
   6: [[0, 0], [1, 0], [2, 0], [0, 2], [1, 2], [2, 2]],
 };
 
-export type BoneSize = "sm" | "md" | "lg";
+export type BoneSize = "xs" | "sm" | "md" | "lg";
 
 export function boneHtml(
   d: Domino,
@@ -25,6 +25,8 @@ export function boneHtml(
     selected?: boolean;
     disabled?: boolean;
     justPlayed?: boolean;
+    marked?: boolean;
+    locked?: boolean;
   } = {},
 ): string {
   const size = options.size ?? "md";
@@ -38,6 +40,8 @@ export function boneHtml(
     count && !options.faceDown ? "has-count" : "",
     options.selected ? "selected" : "",
     options.justPlayed ? "just-played" : "",
+    options.marked ? "marked" : "",
+    options.locked ? "locked" : "",
   ]
     .filter(Boolean)
     .join(" ");
@@ -74,7 +78,7 @@ function compareDisplay(a: Domino, b: Domino, trump: Trump | null): number {
 
 function half(n: number): string {
   const pips = (PIPS[n] ?? [])
-    .map(([row, col]) => `<i style="grid-row:${row + 1};grid-column:${col + 1}"></i>`)
+    .map(([row, col]) => `<i class="pip pip-${n}" style="grid-row:${row + 1};grid-column:${col + 1}"></i>`)
     .join("");
   return `<span class="half">${pips}</span>`;
 }

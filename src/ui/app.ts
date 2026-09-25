@@ -1,6 +1,6 @@
 import { BOT_STYLES, chooseAction } from "../ai/heuristic";
 import type { Domino, Seat } from "../engine/domino";
-import { countValue, dominoKey, seatName, teamOf } from "../engine/domino";
+import { dominoKey, dominoLabel, seatName, teamOf } from "../engine/domino";
 import {
   type GameState,
   type MatchSettings,
@@ -13,7 +13,7 @@ import {
 } from "../engine/game";
 import { trumpKey, trumpName, type Trump } from "../engine/trump";
 import { boneHtml, sortHand } from "./dominoView";
-import { RULES_HTML, contractLine, needLine, seatWord, turnLine } from "./text";
+import { RULES_HTML, contractLine, needLine, seatWord, turnLine, yourPlayLine } from "./text";
 
 const PACE_MS = {
   relaxed: { think: 900, trick: 1300, pass: 1400 },
@@ -53,6 +53,7 @@ export function mount(root: HTMLElement): void {
   let rulesOpen = false;
   let state: GameState | null = null;
   let selectedKey: string | null = null;
+  let alertText = "";
   let timer = 0;
   let audio: AudioContext | null = null;
 
@@ -127,6 +128,12 @@ export function mount(root: HTMLElement): void {
 
   function playSelected(): void {
     if (!state || !selectedKey || state.phase !== "playing" || state.turn !== 0) return;
+    const legal = new Set(observe(state, 0).legalPlays.map(dominoKey));
+    if (!legal.has(selectedKey)) {
+      selectedKey = null;
+      alertText = "You have to follow suit.";
+      return;
+    }
     const domino = state.hands[0].find((d) => dominoKey(d) === selectedKey);
     if (!domino) return;
     selectedKey = null;
@@ -138,9 +145,9 @@ export function mount(root: HTMLElement): void {
     if (!state) return;
     try {
       state = apply(state, action);
+      alertText = "";
     } catch (error) {
-      const message = error instanceof Error ? error.message : "That play is not legal.";
-      state = { ...state, log: [...state.log, message] };
+      alertText = error instanceof Error ? error.message : "That play is not legal.";
     }
     selectedKey = null;
     render();
@@ -177,8 +184,6 @@ export function mount(root: HTMLElement): void {
 
   function render(): void {
     root.innerHTML = screen === "menu" || !state ? menuHtml() : tableHtml(state);
-    const log = root.querySelector(".log");
-    if (log) log.scrollTop = log.scrollHeight;
   }
 
   function menuHtml(): string {
@@ -250,6 +255,7 @@ export function mount(root: HTMLElement): void {
                     <p class="status" aria-live="polite">${escapeHtml(turnLine(game))}</p>
                     <div class="trick">${trickSlots(game)}</div>
                     <p class="contract">${escapeHtml(handBanner(game))}</p>
+                    <p class="count-out">${escapeHtml(countOutLine(game))}</p>
                   </div>
                   ${seatBlock(game, 3, "east")}
                 </div>
@@ -267,23 +273,10 @@ export function mount(root: HTMLElement): void {
             </div>
           </section>
           <aside class="side">
-            <section class="panel">
-              <h2>This hand</h2>
-              <p>${escapeHtml(contractLine(game))}</p>
-              <p class="need">${escapeHtml(needLine(game))}</p>
-              <div class="captured">
-                <span>Us ${game.handPoints[0]}</span>
-                <span>Them ${game.handPoints[1]}</span>
-              </div>
-              <h3>Count still out</h3>
-              <div class="honors">${remainingHonors(game)}</div>
-            </section>
-            <section class="panel log-panel">
-              <h2>Table talk</h2>
-              <ol class="log">${game.log.map((line) => `<li>${escapeHtml(line)}</li>`).join("")}</ol>
-            </section>
+            ${trickBoardHtml(game)}
           </aside>
         </div>
+        ${trumpBadgeHtml(game)}
         ${overlayHtml(game)}
         ${rulesOpen ? `<div class="rules-pop" role="dialog" aria-label="Rules"><button type="button" class="tool close-rules" data-act="close-rules">Close</button>${RULES_HTML}</div>` : ""}
       </div>`;
@@ -342,20 +335,18 @@ export function mount(root: HTMLElement): void {
   }
 
   function yourHandHtml(game: GameState): string {
-    const legal = new Set(
-      game.phase === "playing" && game.turn === 0 ? observe(game, 0).legalPlays.map(dominoKey) : [],
-    );
+    const legal = legalKeys(game);
     const yourTurn = game.phase === "playing" && game.turn === 0;
     return sortHand(game.hands[0], game.trump)
       .map((d) => {
         const key = dominoKey(d);
-        const playable = legal.has(key);
+        const playable = !yourTurn || legal.has(key);
         return boneHtml(d, {
           size: "lg",
           trump: game.trump,
-          interactive: yourTurn,
-          selected: selectedKey === key,
-          disabled: yourTurn && !playable,
+          interactive: playable && yourTurn,
+          selected: selectedKey === key && playable,
+          locked: yourTurn && !legal.has(key),
         });
       })
       .join("");
@@ -380,13 +371,72 @@ export function mount(root: HTMLElement): void {
       ).join("");
       return `<div class="trumps" aria-label="Name trump">${buttons}</div>`;
     }
-    if (game.phase === "playing" && game.turn === 0 && selectedKey) {
-      return `<button type="button" class="primary play-go" data-act="play">Play ${selectedKey}</button>`;
+    if (game.phase === "playing" && game.turn === 0 && selectedKey && legalKeys(game).has(selectedKey)) {
+      return `<div class="play-row"><p class="dock-note">${escapeHtml(yourPlayLine(game))}</p><button type="button" class="primary play-go" data-act="play">Play ${selectedKey}</button></div>`;
     }
     if (game.phase === "playing" && game.turn === 0) {
-      return `<p class="dock-note">Click a lit tile to choose it, then click it again to play.</p>`;
+      return `<p class="dock-note">${escapeHtml(alertText || yourPlayLine(game))}</p>`;
     }
-    return `<p class="dock-note">${escapeHtml(waitingNote(game))}</p>`;
+    return `<p class="dock-note">${escapeHtml(alertText || waitingNote(game))}</p>`;
+  }
+
+  function legalKeys(game: GameState): Set<string> {
+    if (game.phase !== "playing" || game.turn !== 0 || !game.trump) return new Set();
+    return new Set(observe(game, 0).legalPlays.map(dominoKey));
+  }
+
+  function trickBoardHtml(game: GameState): string {
+    const ours = game.completedTricks.filter((trick) => teamOf(trick.winner) === 0);
+    const theirs = game.completedTricks.filter((trick) => teamOf(trick.winner) === 1);
+    return `
+      <div class="trick-board">
+        <section class="won theirs">
+          <header>
+            <h2>West &amp; East</h2>
+            <span>${game.handPoints[1]}</span>
+          </header>
+          ${trickStack(game, theirs)}
+        </section>
+        <div class="stack-gap" aria-hidden="true"></div>
+        <section class="won ours">
+          <header>
+            <h2>You &amp; Partner</h2>
+            <span>${game.handPoints[0]}</span>
+          </header>
+          ${trickStack(game, ours)}
+        </section>
+      </div>`;
+  }
+
+  function trickStack(game: GameState, tricks: GameState["completedTricks"]): string {
+    if (tricks.length === 0) return `<p class="empty-tricks">No tricks yet</p>`;
+    return `<div class="trick-list">${tricks
+      .map((trick) => {
+        const tiles = trick.plays
+          .map((play) =>
+            boneHtml(play.domino, {
+              size: "xs",
+              trump: game.trump,
+              marked: play.player === trick.winner,
+            }),
+          )
+          .join("");
+        return `<div class="past-trick">${tiles}<span class="pts">+${trick.points}</span></div>`;
+      })
+      .join("")}</div>`;
+  }
+
+  function trumpBadgeHtml(game: GameState): string {
+    if (!game.trump) {
+      return `<aside class="trump-badge waiting" aria-label="Trump"><span>Trump</span><strong>Not named</strong></aside>`;
+    }
+    const sample =
+      game.trump.kind === "suit"
+        ? boneHtml({ hi: game.trump.suit, lo: game.trump.suit }, { size: "sm", trump: game.trump })
+        : game.trump.kind === "doubles"
+          ? boneHtml({ hi: 6, lo: 6 }, { size: "sm", trump: game.trump })
+          : "";
+    return `<aside class="trump-badge" aria-live="polite" aria-label="Trump is ${trumpName(game.trump)}"><span>Trump</span><strong>${escapeHtml(trumpName(game.trump))}</strong>${sample}</aside>`;
   }
 
   function overlayHtml(game: GameState): string {
@@ -423,18 +473,6 @@ export function mount(root: HTMLElement): void {
       </div>`;
   }
 
-  function remainingHonors(game: GameState): string {
-    const seen = new Set<string>();
-    for (const trick of game.completedTricks) {
-      for (const play of trick.plays) seen.add(dominoKey(play.domino));
-    }
-    for (const play of game.currentTrick) seen.add(dominoKey(play.domino));
-    const left = HONORS.filter((d) => !seen.has(dominoKey(d)));
-    if (left.length === 0) return `<p class="fine">All five count tiles have been played.</p>`;
-    return left
-      .map((d) => `<div class="honor">${boneHtml(d, { size: "sm", trump: game.trump })}<small>${countValue(d)}</small></div>`)
-      .join("");
-  }
 
   function blip(freq: number, gain: number): void {
     if (!soundOn) return;
@@ -465,6 +503,18 @@ function playerBid(game: GameState, seat: Seat): string {
   if (!bid) return game.shaker === seat ? "shakes" : "";
   if (bid.kind === "pass") return "pass";
   return `bid ${bid.amount}`;
+}
+
+function countOutLine(game: GameState): string {
+  if (game.phase === "bidding" || game.phase === "trump") return "";
+  const seen = new Set<string>();
+  for (const trick of game.completedTricks) {
+    for (const play of trick.plays) seen.add(dominoKey(play.domino));
+  }
+  for (const play of game.currentTrick) seen.add(dominoKey(play.domino));
+  const left = HONORS.filter((d) => !seen.has(dominoKey(d)));
+  if (left.length === 0) return "All count tiles have been played.";
+  return `Count still out: ${left.map((d) => dominoLabel(d)).join(", ")}`;
 }
 
 function handBanner(game: GameState): string {
