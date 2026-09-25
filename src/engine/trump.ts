@@ -88,11 +88,16 @@ export function ledCall(lead: Domino, trump: Trump): { isTrump: boolean; suit: n
   return { isTrump: false, suit: c.suit };
 }
 
+/**
+ * A non-trump lead calls its higher end. Any tile with that number follows,
+ * including one whose other end is higher. A trump tile belongs only to trump.
+ */
 export function followsLead(d: Domino, lead: Domino, trump: Trump): boolean {
   const call = ledCall(lead, trump);
   const c = classify(d, trump);
   if (call.isTrump) return c.isTrump;
-  return !c.isTrump && c.suit === call.suit;
+  if (c.isTrump) return false;
+  return d.hi === call.suit || d.lo === call.suit;
 }
 
 /** Tiles the player is allowed to play on this trick. Empty trick means any lead. */
@@ -135,20 +140,27 @@ function beats(
   call: { isTrump: boolean; suit: number },
   trump: Trump,
 ): boolean {
-  const c = classify(challenger, trump);
-  const h = classify(holder, trump);
-  const cWins = tileCanWin(c, call);
-  const hWins = tileCanWin(h, call);
-  if (cWins && !hWins) return true;
-  if (!cWins || !hWins) return false;
-  if (c.isTrump !== h.isTrump) return c.isTrump;
+  const c = standing(challenger, call, trump);
+  const h = standing(holder, call, trump);
+  if (c.wins && !h.wins) return true;
+  if (!c.wins || !h.wins) return false;
+  if (c.asTrump !== h.asTrump) return c.asTrump;
   return c.rank > h.rank;
 }
 
-function tileCanWin(c: TileClass, call: { isTrump: boolean; suit: number }): boolean {
-  if (c.isTrump) return true;
-  if (call.isTrump) return false;
-  return c.suit === call.suit;
+/** How a tile stands in this trick. Rank is the other end of the led suit. */
+function standing(
+  d: Domino,
+  call: { isTrump: boolean; suit: number },
+  trump: Trump,
+): { wins: boolean; asTrump: boolean; rank: number } {
+  const c = classify(d, trump);
+  if (c.isTrump) return { wins: true, asTrump: true, rank: c.rank };
+  if (call.isTrump || (d.hi !== call.suit && d.lo !== call.suit)) {
+    return { wins: false, asTrump: false, rank: 0 };
+  }
+  const rank = isDouble(d) ? 7 : d.hi === call.suit ? d.lo : d.hi;
+  return { wins: true, asTrump: false, rank };
 }
 
 /** Every rank that exists in a trump suit, highest first. */
@@ -159,18 +171,20 @@ export function trumpRankOrder(trump: Trump): number[] {
   return [7, ...offs];
 }
 
-/** Ranks of a non-trump suit, highest first. Empty when that suit cannot be led. */
+/**
+ * Ranks of a non-trump suit, highest first.
+ * 7 is the double. Every other rank is the off end, including numbers higher
+ * than the suit, because the low end still belongs to the suit that was led.
+ * Empty when that number is trump and cannot be led as an off suit.
+ */
 export function offsuitRankOrder(suit: number, trump: Trump): number[] {
   if (trump.kind === "suit" && trump.suit === suit) return [];
-  if (trump.kind === "doubles") {
-    const ranks: number[] = [];
-    for (let k = suit - 1; k >= 0; k--) ranks.push(k);
-    return ranks;
-  }
-  const ranks = [7];
-  for (let k = suit - 1; k >= 0; k--) ranks.push(k);
-  if (trump.kind === "suit" && trump.suit < suit) {
-    return ranks.filter((r) => r !== trump.suit);
+  const ranks: number[] = [];
+  if (trump.kind !== "doubles") ranks.push(7);
+  for (let k = 6; k >= 0; k--) {
+    if (k === suit) continue;
+    if (trump.kind === "suit" && k === trump.suit) continue;
+    ranks.push(k);
   }
   return ranks;
 }

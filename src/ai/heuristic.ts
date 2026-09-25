@@ -1,7 +1,7 @@
 import type { Domino, Seat } from "../engine/domino";
 import { countValue, dominoKey, teamOf } from "../engine/domino";
 import type { Action, PlayerView } from "../engine/game";
-import { classify, winningIndex, type Trump } from "../engine/trump";
+import { classify, offsuitRankOrder, trumpRankOrder, winningIndex, type Trump } from "../engine/trump";
 import { bestEstimate } from "./evaluate";
 
 export interface BotStyle {
@@ -171,7 +171,7 @@ function isUnbeatable(d: Domino, view: PlayerView, trump: Trump): boolean {
   if (c.isTrump) {
     return !anyHigherUnseen(c.rank, trumpRankList(trump), (rank) => trumpTileKey(trump, rank), seen);
   }
-  return !anyHigherUnseen(c.rank, offsuitRanks(c.suit, trump), (rank) => offsuitTileKey(c.suit, rank, trump), seen);
+  return !anyHigherUnseen(c.rank, offsuitRankOrder(c.suit, trump), (rank) => offsuitTileKey(c.suit, rank, trump), seen);
 }
 
 function anyHigherUnseen(
@@ -189,21 +189,7 @@ function anyHigherUnseen(
 }
 
 function trumpRankList(trump: Trump): number[] {
-  if (trump.kind === "doubles") return [6, 5, 4, 3, 2, 1, 0];
-  if (trump.kind === "followMe") return [];
-  return [7, ...[6, 5, 4, 3, 2, 1, 0].filter((k) => k !== trump.suit)];
-}
-
-function offsuitRanks(suit: number, trump: Trump): number[] {
-  if (trump.kind === "doubles") {
-    const ranks: number[] = [];
-    for (let k = suit - 1; k >= 0; k--) ranks.push(k);
-    return ranks;
-  }
-  const ranks = [7];
-  for (let k = suit - 1; k >= 0; k--) ranks.push(k);
-  if (trump.kind === "suit" && trump.suit < suit) return ranks.filter((r) => r !== trump.suit);
-  return ranks;
+  return trumpRankOrder(trump);
 }
 
 function trumpTileKey(trump: Trump, rank: number): string | null {

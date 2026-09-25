@@ -23,7 +23,7 @@ This is straight four-handed 42, the partnership game. It follows the common tou
 - The high bidder names trump before the lead: blanks, ones, twos, threes, fours, fives, sixes, doubles, or no trump (follow me).
 - The opening lead may be any tile. The menu has a house rule that forces that first lead to be a trump.
 - A tile that contains the trump number is always trump. Its other end is the rank, and the double is highest. You follow the suit that was led when you can. If you cannot, any tile is legal, including a trump, and trump is not required.
-- On a non-trump lead the suit is the higher end. In follow me there is no trump. When doubles are trump, a double does not follow the number on its face.
+- On a non-trump lead the suit is the higher end. A tile with that number on either end must follow, unless the tile is trump. In follow me there is no trump. When doubles are trump, a double does not follow the number on its face.
 - Each trick is worth 1. The count tiles are 5-0, 4-1, and 3-2 (5 each) and 6-4 and 5-5 (10 each). That is 42.
 - Points, first to 250: a made bid scores each team what it captured. A set bid scores the bidding team nothing, and the defenders score what they captured plus the bid. A bid of 42 or higher is the stake itself. The bidder must take all 42 points, and the side that wins the contract scores that stake.
 - Marks, first to 7: the side that makes or sets the bid takes one mark, or `bid / 42` marks when the bid is 42 or higher.

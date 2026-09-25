@@ -106,9 +106,16 @@ describe("following suit", () => {
     expect(legalPlays(hand, [D(6, 5)], doubles).map(dominoKey)).toEqual(["6-4"]);
   });
 
-  it("follows the higher end in follow-me, and a double is in that suit", () => {
+  it("follows either end, and a double is high in that suit", () => {
     const hand = [D(6, 5), D(5, 5), D(5, 1)];
-    expect(legalPlays(hand, [D(5, 4)], followMe).map(dominoKey).sort()).toEqual(["5-1", "5-5"]);
+    expect(legalPlays(hand, [D(5, 4)], followMe).map(dominoKey).sort()).toEqual(["5-1", "5-5", "6-5"]);
+  });
+
+  it("forces the 3-1 on a double-one, and lets a trump three stay off that lead", () => {
+    const hand = [D(3, 1), D(6, 4), D(5, 5), D(2, 0)];
+    expect(legalPlays(hand, [D(1, 1)], fours).map(dominoKey)).toEqual(["3-1"]);
+    const threes: Trump = { kind: "suit", suit: 3 };
+    expect(legalPlays([D(3, 1), D(6, 6)], [D(1, 1)], threes).map(dominoKey).sort()).toEqual(["3-1", "6-6"]);
   });
 
   it("can require the opening lead to be trump", () => {
@@ -132,6 +139,12 @@ describe("winning the trick", () => {
   it("lets the led suit win when nobody trumps, with the double high", () => {
     const plays = [D(6, 5), D(6, 6), D(6, 4), D(3, 2)];
     expect(winningIndex(plays, ones)).toBe(1);
+  });
+
+  it("ranks the off end when the low end is what was led", () => {
+    const fives: Trump = { kind: "suit", suit: 5 };
+    expect(winningIndex([D(1, 0), D(3, 1), D(6, 1), D(4, 2)], fives)).toBe(2);
+    expect(winningIndex([D(1, 0), D(1, 1), D(6, 1), D(3, 1)], fives)).toBe(1);
   });
 
   it("has no trumps in follow-me", () => {
