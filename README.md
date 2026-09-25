@@ -20,7 +20,7 @@ This is straight four-handed 42, the partnership game. It follows the common tou
 - Double-six set, seven tiles each, no boneyard.
 - Partners sit across: you and Partner against West and East. Play moves clockwise, to your left (West, then Partner, then East).
 - Bidding starts with the player left of the shaker. Each player bids once. Bids run from 30 through 42. After 42 the next bid is 84, and only after 84 may someone bid 126 or 168. If everyone passes, the hand is shaken again and nobody scores.
-- The high bidder names trump before the lead: blanks, aces, deuces, treys, fours, fives, sixes, doubles, or follow me.
+- The high bidder names trump before the lead: blanks, ones, twos, threes, fours, fives, sixes, doubles, or no trump (follow me).
 - The opening lead may be any tile. The menu has a house rule that forces that first lead to be a trump.
 - A tile that contains the trump number is always trump. Its other end is the rank, and the double is highest. You follow the suit that was led when you can. If you cannot, any tile is legal, including a trump, and trump is not required.
 - On a non-trump lead the suit is the higher end. In follow me there is no trump. When doubles are trump, a double does not follow the number on its face.

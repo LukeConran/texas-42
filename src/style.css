@@ -329,12 +329,25 @@ button.tile:disabled {
   padding: 8px 12px 8px 14px;
   box-shadow: var(--shadow);
 }
-.trump-badge span {
-  display: block;
+.trump-kicker {
+  margin: 0;
   font-size: 0.68rem;
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--gold);
+}
+.trump-badge .bone-sm {
+  width: 44px;
+  height: 81px;
+}
+.trump-badge .doubles-grid {
+  display: grid;
+  grid-template-columns: repeat(2, auto);
+  gap: 4px;
+}
+.trump-badge .doubles-grid .bone-xs {
+  width: 32px;
+  height: 57px;
 }
 .trump-badge strong {
   display: block;

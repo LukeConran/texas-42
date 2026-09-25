@@ -33,14 +33,14 @@ const HONORS: Domino[] = [
 
 const TRUMP_BUTTONS: Array<{ trump: Trump; label: string; hint: string }> = [
   { trump: { kind: "suit", suit: 0 }, label: "Blanks", hint: "0s" },
-  { trump: { kind: "suit", suit: 1 }, label: "Aces", hint: "1s" },
-  { trump: { kind: "suit", suit: 2 }, label: "Deuces", hint: "2s" },
-  { trump: { kind: "suit", suit: 3 }, label: "Treys", hint: "3s" },
+  { trump: { kind: "suit", suit: 1 }, label: "Ones", hint: "1s" },
+  { trump: { kind: "suit", suit: 2 }, label: "Twos", hint: "2s" },
+  { trump: { kind: "suit", suit: 3 }, label: "Threes", hint: "3s" },
   { trump: { kind: "suit", suit: 4 }, label: "Fours", hint: "4s" },
   { trump: { kind: "suit", suit: 5 }, label: "Fives", hint: "5s" },
   { trump: { kind: "suit", suit: 6 }, label: "Sixes", hint: "6s" },
   { trump: { kind: "doubles" }, label: "Doubles", hint: "the seven doubles" },
-  { trump: { kind: "followMe" }, label: "Follow me", hint: "no trump" },
+  { trump: { kind: "followMe" }, label: "No Trump", hint: "follow me" },
 ];
 
 export function mount(root: HTMLElement): void {
@@ -428,15 +428,16 @@ export function mount(root: HTMLElement): void {
 
   function trumpBadgeHtml(game: GameState): string {
     if (!game.trump) {
-      return `<aside class="trump-badge waiting" aria-label="Trump"><span>Trump</span><strong>Not named</strong></aside>`;
+      return `<aside class="trump-badge waiting" aria-label="Trump"><p class="trump-kicker">Trump</p><strong>Not named</strong></aside>`;
     }
-    const sample =
-      game.trump.kind === "suit"
-        ? boneHtml({ hi: game.trump.suit, lo: game.trump.suit }, { size: "sm", trump: game.trump })
-        : game.trump.kind === "doubles"
-          ? boneHtml({ hi: 6, lo: 6 }, { size: "sm", trump: game.trump })
+    const label = game.trump.kind === "followMe" ? "No Trump" : trumpName(game.trump);
+    const icon =
+      game.trump.kind === "doubles"
+        ? `<div class="doubles-grid">${[6, 5, 4, 3].map((n) => boneHtml({ hi: n, lo: n }, { size: "xs", trump: game.trump })).join("")}</div>`
+        : game.trump.kind === "suit"
+          ? boneHtml({ hi: game.trump.suit, lo: game.trump.suit }, { size: "sm", trump: game.trump })
           : "";
-    return `<aside class="trump-badge" aria-live="polite" aria-label="Trump is ${trumpName(game.trump)}"><span>Trump</span><strong>${escapeHtml(trumpName(game.trump))}</strong>${sample}</aside>`;
+    return `<aside class="trump-badge" aria-live="polite" aria-label="Trump is ${label}"><p class="trump-kicker">Trump</p><strong>${escapeHtml(label)}</strong>${icon}</aside>`;
   }
 
   function overlayHtml(game: GameState): string {
