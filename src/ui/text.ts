@@ -1,17 +1,17 @@
 import type { Seat } from "../engine/domino";
-import { suitName, teamOf } from "../engine/domino";
+import { partnerOf, seatSteps, suitName, teamOf } from "../engine/domino";
 import type { GameState } from "../engine/game";
 import { bidLabel } from "../engine/game";
 import { followsLead, ledCall, trumpName } from "../engine/trump";
 
-export function contractLine(state: GameState): string {
+export function contractLine(state: GameState, viewer: Seat = 0, names?: Names): string {
   if (state.highBid == null || state.highBidder == null) return "No bid yet";
-  const who = state.highBidder === 0 ? "You" : state.highBidder === 2 ? "Partner" : seatWord(state.highBidder);
+  const who = seatWord(state.highBidder, viewer, names);
   const trump = state.trump ? trumpName(state.trump) : "trump not named";
   return `${who} bid ${bidLabel(state.highBid)} · ${trump}`;
 }
 
-export function needLine(state: GameState): string {
+export function needLine(state: GameState, viewer: Seat = 0): string {
   if (state.highBid == null || state.highBidder == null || state.phase === "bidding") return "";
   const bidderTeam = teamOf(state.highBidder);
   const need = Math.min(state.highBid, 42);
@@ -19,26 +19,26 @@ export function needLine(state: GameState): string {
   const defenders = state.handPoints[(1 - bidderTeam) as 0 | 1];
   if (have >= need) return "The bid is made. Finish the hand.";
   if (defenders > 42 - need) return "The bid is set. Finish the hand.";
-  const who = bidderTeam === 0 ? "Your team needs" : "They need";
+  const who = bidderTeam === teamOf(viewer) ? "Your team needs" : "They need";
   return `${who} ${need - have} more.`;
 }
 
-export function turnLine(state: GameState): string {
+export function turnLine(state: GameState, viewer: Seat = 0, names?: Names): string {
   if (state.phase === "bidding") {
-    if (state.turn === 0) return "Your bid. Pass, or name what your team can take.";
-    return `${seatWord(state.turn!)} is bidding.`;
+    if (state.turn === viewer) return "Your bid. Pass, or name what your team can take.";
+    return `${seatWord(state.turn!, viewer, names)} is bidding.`;
   }
   if (state.phase === "trump") {
-    if (state.turn === 0) return "You won the bid. Name trump, then lead.";
-    return `${seatWord(state.turn!)} is naming trump.`;
+    if (state.turn === viewer) return "You won the bid. Name trump, then lead.";
+    return `${seatWord(state.turn!, viewer, names)} is naming trump.`;
   }
   if (state.phase === "playing" || state.phase === "trickComplete") {
-    if (state.phase === "trickComplete") {
-      const last = state.log[state.log.length - 1] ?? "";
-      return last;
+    if (state.phase === "trickComplete" && state.turn != null) {
+      const who = seatWord(state.turn, viewer, names);
+      return who === "You" ? "You take the trick." : `${who} takes the trick.`;
     }
-    if (state.turn === 0) return yourPlayLine(state);
-    return `${seatWord(state.turn!)} to play.`;
+    if (state.turn === viewer) return yourPlayLine(state, viewer);
+    return `${seatWord(state.turn!, viewer, names)} to play.`;
   }
   if (state.phase === "handComplete" && state.lastResult?.passed) {
     return "Everyone passed. Shake again.";
@@ -47,7 +47,7 @@ export function turnLine(state: GameState): string {
   return "Hand complete.";
 }
 
-export function yourPlayLine(state: GameState): string {
+export function yourPlayLine(state: GameState, viewer: Seat = 0): string {
   if (!state.trump) return "Your play.";
   const opening =
     state.settings.openingLeadMustBeTrump &&
@@ -59,14 +59,20 @@ export function yourPlayLine(state: GameState): string {
   }
   const lead = state.currentTrick[0]!.domino;
   const call = ledCall(lead, state.trump);
-  const canFollow = state.hands[0].some((d) => followsLead(d, lead, state.trump!));
+  const canFollow = state.hands[viewer].some((d) => followsLead(d, lead, state.trump!));
   if (!canFollow) return "You can't follow suit. Any tile is legal, and trump is optional.";
   if (call.isTrump) return "Trump was led. Play a trump.";
   return `Follow ${suitName(call.suit)}.`;
 }
 
-export function seatWord(seat: Seat): string {
-  return ["You", "West", "Partner", "East"][seat] ?? "Player";
+export type Names = (string | null)[];
+
+export function seatWord(seat: Seat, viewer: Seat = 0, names?: Names): string {
+  if (seatSteps(viewer, seat) === 0) return "You";
+  const custom = names?.[seat]?.trim();
+  if (custom) return custom;
+  if (seat === partnerOf(viewer)) return "Partner";
+  return seatSteps(viewer, seat) === 1 ? "West" : "East";
 }
 
 export function bidChip(amount: number | "pass" | null, pending: boolean): string {

@@ -192,6 +192,7 @@ export function observe(state: GameState, seat: Seat): PlayerView {
     settings: state.settings,
     handNumber: state.handNumber,
     lastResult: state.lastResult,
+    handCounts: state.hands.map((hand) => hand.length) as [number, number, number, number],
   };
 }
 
@@ -216,6 +217,8 @@ export interface PlayerView {
   settings: MatchSettings;
   handNumber: number;
   lastResult: HandResult | null;
+  /** How many tiles each seat still holds. Faces stay hidden. */
+  handCounts: [number, number, number, number];
 }
 
 function applyBid(state: GameState, amount: number | "pass"): GameState {
