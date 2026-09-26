@@ -74,7 +74,11 @@ describe("reinforce", () => {
     const result = reinforce(start, { hands: 2, lr: 0.02, evalDeals: 1, seed: 21000 });
     const again = reinforce(modelFromJson(modelToJson(start)), { hands: 2, lr: 0.02, evalDeals: 1, seed: 21000 });
     expect(again.model).toEqual(result.model);
+    expect(result.accepted).toBe(false);
     expect(result.versusHeuristic.hands).toBe(2);
+    expect(result.versusStart.awardA - result.versusStart.awardB).toBe(
+      result.versusHeuristic.awardA - result.versusHeuristic.awardB,
+    );
     for (const head of [result.model.bid, result.model.trump, result.model.play]) {
       expect(head.w.length).toBe(head.in);
       for (const weight of head.w) expect(Number.isFinite(weight)).toBe(true);

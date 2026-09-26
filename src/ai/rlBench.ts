@@ -3,12 +3,14 @@ import { modelFromJson, modelToJson } from "./imitate";
 import { reinforce } from "./reinforce";
 
 /**
- * Nudge the saved weights from the marks at the end of each hand.
- * Usage: npm run rl -- <hands> <step>
- * Replaces src/ai/imitate.json only when the new weights win both held-out duels.
+ * Search for weight changes that win more marks against the heuristic.
+ * Usage: npm run rl -- <hands> <shake>
+ * The shake scales each try. 1 is the normal size. 0.05 is a very small shake.
+ * Replaces src/ai/imitate.json when the best version beats the starting weights
+ * on two fresh sets of deals.
  */
-const hands = positive(process.argv[2], 80);
-const lr = positiveFloat(process.argv[3], 0.02);
+const hands = positive(process.argv[2], 30000);
+const step = positiveFloat(process.argv[3], 1);
 const outPath = "src/ai/imitate.json";
 
 let text: string;
@@ -20,33 +22,39 @@ try {
 }
 
 const start = modelFromJson(text);
-console.log(`Training ${hands} hands from the saved weights, step size ${lr}.`);
+console.log(`Searching ${hands} hands for weight changes that win more marks. Shake scale ${step}.`);
 const started = Date.now();
+let printed = -1;
 const result = reinforce(start, {
   hands,
-  lr,
-  onHand(done, total) {
-    if (done === total || done % 10 === 0) {
-      const seconds = ((Date.now() - started) / 1000).toFixed(1);
-      console.log(`  ${done}/${total} hands (${seconds}s)`);
-    }
+  lr: step,
+  onProgress(progress) {
+    const bucket = Math.floor((progress.used / progress.hands) * 10);
+    if (!progress.checked && bucket === printed) return;
+    if (!progress.checked) printed = bucket;
+    const seconds = ((Date.now() - started) / 1000).toFixed(1);
+    const deals = progress.best.hands / 2;
+    console.log(
+      `  ${Math.min(progress.used, progress.hands)}/${progress.hands} hands (${seconds}s). ` +
+        `${deals} fresh deals: best ${progress.best.awardA}-${progress.best.awardB}, ` +
+        `start ${progress.start.awardA}-${progress.start.awardB}.`,
+    );
   },
 });
 
 const seconds = ((Date.now() - started) / 1000).toFixed(1);
-const deals = result.versusHeuristic.hands / 2;
-console.log(`Training hands where everyone passed: ${result.trainingPasses} of ${hands}.`);
+const deals = result.versusStart.hands / 2;
 console.log(
-  `Held-out ${deals} deals vs heuristic: learned ${result.versusHeuristic.awardA}, heuristic ${result.versusHeuristic.awardB}. ${result.versusHeuristic.passes} of ${result.versusHeuristic.hands} hands passed.`,
+  `Validation, ${deals} deals: start ${result.versusStart.awardA}-${result.versusStart.awardB}, best ${result.versusHeuristic.awardA}-${result.versusHeuristic.awardB}.`,
 );
 console.log(
-  `Held-out ${deals} deals vs previous weights: learned ${result.versusPrevious.awardA}, previous ${result.versusPrevious.awardB}. ${result.versusPrevious.passes} of ${result.versusPrevious.hands} hands passed.`,
+  `Confirmation, ${deals} other deals: start ${result.confirmationStart.awardA}-${result.confirmationStart.awardB}, best ${result.confirmation.awardA}-${result.confirmation.awardB}.`,
 );
 if (result.accepted) {
   writeFileSync(outPath, modelToJson(result.model));
-  console.log(`The learned weights beat both, so ${outPath} was replaced (${seconds}s).`);
+  console.log(`The best weights won more marks on both sets, so ${outPath} was replaced (${seconds}s).`);
 } else {
-  console.log(`The learned weights did not beat both, so ${outPath} was left as it was (${seconds}s).`);
+  console.log(`The best weights did not win more marks on both sets, so ${outPath} was left as it was (${seconds}s).`);
 }
 
 function positive(value: string | undefined, fallback: number): number {
