@@ -56,6 +56,37 @@ describe("room doorbell", () => {
     expect(full.status).toBe(409);
   });
 
+  it("passes a move from the guest to the host and the hand back", async () => {
+    const created = await handleSignal({ op: "create" });
+    const { code, hostId } = created.body as { code: string; hostId: string };
+    expect(hostId).toMatch(/^[A-Z2-9]{16}$/);
+    const entered = await handleSignal({ op: "enter", code, name: "Ada" });
+    expect(entered.status).toBe(200);
+    const guestId = (entered.body as { guestId: string }).guestId;
+    expect(guestId).toMatch(/^[A-Z2-9]{16}$/);
+
+    const posted = await handleSignal({ op: "post", code, guestId, box: "toHost", body: "{\"type\":\"hello\"}" });
+    expect(posted.status).toBe(200);
+    const denied = await handleSignal({ op: "hostBox", code, after: {} });
+    expect(denied.status).toBe(403);
+    const host = await handleSignal({ op: "hostBox", code, hostId, after: {} });
+    const hostBody = host.body as { guests: Array<{ id: string; name: string }>; mail: Array<{ guestId: string; n: number; body: string }> };
+    expect(hostBody.guests.map((guest) => guest.name)).toEqual(["Ada"]);
+    expect(hostBody.mail).toEqual([{ guestId, n: 0, body: "{\"type\":\"hello\"}" }]);
+
+    const sneaky = await handleSignal({ op: "post", code, guestId, box: "toGuest", body: "nope" });
+    expect(sneaky.status).toBe(403);
+    await handleSignal({ op: "post", code, guestId, box: "toGuest", body: "sync", hostId });
+    const guest = await handleSignal({ op: "guestBox", code, guestId, after: 0 });
+    expect(guest.body).toEqual({ mail: [{ n: 0, body: "sync" }] });
+    const rest = await handleSignal({ op: "guestBox", code, guestId, after: 1 });
+    expect(rest.body).toEqual({ mail: [] });
+
+    await handleSignal({ op: "close", code, hostId });
+    const gone = await handleSignal({ op: "guestBox", code, guestId, after: 1 });
+    expect(gone.status).toBe(404);
+  });
+
   it("answers JSON when Vercel calls the function with a web request", async () => {
     const response = await roomFetch(
       new Request("https://texas42.local/api/signal", {

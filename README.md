@@ -38,17 +38,16 @@ Nello, sevens, plunge, and splash are not in this version.
 
 ## Play with friends
 
-The first player hosts the match in their own browser. Friends connect straight to that browser. Empty seats are filled by the same bots as a local game. The host has to leave the tab open until the match is done.
+The first player hosts the match in their own browser. Friends join with the room code. Empty seats are filled by the same bots as a local game. The host has to leave the tab open until the match is done.
 
 On the menu, choose **Host a room**, then share the four-letter code or the link (`?room=CODE`). The first person to join sits on the host's left, the second sits across as the host's partner, and the third sits on the host's right. **Show hands** is only on the local table. A room never offers it, and a guest only receives their own tiles.
 
-Dominos do not go through the website. The site only introduces the browsers (a short-lived offer and answer), then the match travels on a direct WebRTC connection. Same wifi can do that through the local dev server. People on different networks need the steps below.
+Moves go through Redis. The host's browser still deals the tiles and decides what is legal. The host sends each guest their own tiles through Redis, long enough to deliver them. The room code alone cannot read those tiles. There is no direct browser-to-browser connection and no extra relay account.
 
 ## Host it so different networks can play
 
 1. Push this branch and import the GitHub repo in [Vercel](https://vercel.com). Use the Vite preset. Build command `npm run build`, output directory `dist`.
-2. In the Vercel project, add **Upstash Redis** from the Marketplace. That injects `UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN`. Those two values are what let a host and a guest on different machines find each other. Redis stores the room code and the connection handshake for a few hours. It never stores a hand.
-3. Deploy. Open the site, host a room, and send your friend the link. They can be on any network. You both need a normal browser connection; the host's tab is the table.
-4. If the room opens but the guest stays on "Joining" and never sees a hand, both networks are likely blocking the direct connection. Add a TURN relay and redeploy with `VITE_TURN_URL`, `VITE_TURN_USERNAME`, and `VITE_TURN_CREDENTIAL`. Those are baked in at build time, so change them and deploy again.
+2. In the Vercel project, add **Upstash Redis** from the Marketplace. The names it injects, `KV_REST_API_URL` and `KV_REST_API_TOKEN` (or `UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN`), are what carry the room. No other account is required.
+3. Deploy. Open the site, host a room, and send your friend the link. They can be on any network. The host's tab is the table.
 
 Local `npm run dev` already answers `/api/signal` in memory, which is enough for two browsers on one computer. A deployed site without the Redis variables only works while every request hits the same server instance.
