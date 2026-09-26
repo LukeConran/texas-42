@@ -2,6 +2,7 @@ export interface GuestOffer {
   id: string;
   offer: string;
   answer: string | null;
+  candidates: string[];
 }
 
 async function post(body: unknown): Promise<Record<string, unknown>> {
@@ -46,7 +47,14 @@ export async function pollHost(code: string): Promise<GuestOffer[]> {
     if (!item || typeof item !== "object") return [];
     const record = item as Record<string, unknown>;
     if (typeof record.id !== "string" || typeof record.offer !== "string") return [];
-    return [{ id: record.id, offer: record.offer, answer: typeof record.answer === "string" ? record.answer : null }];
+    return [
+      {
+        id: record.id,
+        offer: record.offer,
+        answer: typeof record.answer === "string" ? record.answer : null,
+        candidates: stringList(record.candidates),
+      },
+    ];
   });
 }
 
@@ -54,7 +62,24 @@ export async function publishAnswer(code: string, guestId: string, answer: strin
   await post({ op: "answer", code, guestId, answer });
 }
 
-export async function pollGuest(code: string, guestId: string): Promise<string | null> {
+export async function publishCandidate(
+  code: string,
+  guestId: string,
+  from: "guest" | "host",
+  candidate: string,
+): Promise<void> {
+  await post({ op: "ice", code, guestId, from, candidate });
+}
+
+export async function pollGuest(code: string, guestId: string): Promise<{ answer: string | null; candidates: string[] }> {
   const payload = await post({ op: "guest", code, guestId });
-  return typeof payload.answer === "string" ? payload.answer : null;
+  return {
+    answer: typeof payload.answer === "string" ? payload.answer : null,
+    candidates: stringList(payload.candidates),
+  };
+}
+
+function stringList(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((item): item is string => typeof item === "string");
 }

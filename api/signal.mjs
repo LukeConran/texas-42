@@ -1,7 +1,7 @@
 // src/server/signal.ts
 var memory = /* @__PURE__ */ new Map();
 var ROOM_TTL_SECONDS = 60 * 60 * 6;
-var MAX_OFFER = 2e4;
+var MAX_OFFER = 6e4;
 var ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 async function handleSignal(body) {
   const msg = asRecord(body);
@@ -20,7 +20,7 @@ async function handleSignal(body) {
       const room = await loadRoom(code);
       if (!room) return { status: 404, body: { error: "That room does not exist." } };
       if (room.guests.length >= 3) return { status: 409, body: { error: "That room is full." } };
-      const guest = { id: makeCode(), offer, answer: null };
+      const guest = { id: makeCode(), offer, answer: null, fromGuest: [], fromHost: [] };
       room.guests.push(guest);
       await saveRoom(room);
       return { status: 200, body: { guestId: guest.id } };
@@ -28,10 +28,30 @@ async function handleSignal(body) {
     if (op === "host") {
       const room = await loadRoom(cleanCode(msg.code));
       if (!room) return { status: 404, body: { error: "That room does not exist." } };
-      return {
-        status: 200,
-        body: { guests: room.guests.map((guest) => ({ id: guest.id, offer: guest.offer, answer: guest.answer })) }
-      };
+      const guests = [];
+      for (const guest of room.guests) {
+        guests.push({
+          id: guest.id,
+          offer: guest.offer,
+          answer: await readAnswer(room.code, guest),
+          candidates: await readCandidates(room.code, guest, "guest")
+        });
+      }
+      return { status: 200, body: { guests } };
+    }
+    if (op === "ice") {
+      const room = await loadRoom(cleanCode(msg.code));
+      const guestId = typeof msg.guestId === "string" ? msg.guestId : "";
+      const candidate = typeof msg.candidate === "string" ? msg.candidate : "";
+      const side = msg.from === "host" ? "host" : msg.from === "guest" ? "guest" : "";
+      if (!room) return { status: 404, body: { error: "That room does not exist." } };
+      if (!side || candidate.length < 2 || candidate.length > 2e3) {
+        return { status: 400, body: { error: "Missing connection candidate." } };
+      }
+      const guest = room.guests.find((item) => item.id === guestId);
+      if (!guest) return { status: 404, body: { error: "That player is not in the room." } };
+      await pushCandidate(room.code, guest, side, candidate);
+      return { status: 200, body: { ok: true } };
     }
     if (op === "answer") {
       const room = await loadRoom(cleanCode(msg.code));
@@ -43,8 +63,7 @@ async function handleSignal(body) {
       }
       const guest = room.guests.find((item) => item.id === guestId);
       if (!guest) return { status: 404, body: { error: "That player is not in the room." } };
-      guest.answer = answer;
-      await saveRoom(room);
+      await writeAnswer(room.code, guest, answer);
       return { status: 200, body: { ok: true } };
     }
     if (op === "guest") {
@@ -53,7 +72,13 @@ async function handleSignal(body) {
       if (!room) return { status: 404, body: { error: "That room does not exist." } };
       const guest = room.guests.find((item) => item.id === guestId);
       if (!guest) return { status: 404, body: { error: "That player is not in the room." } };
-      return { status: 200, body: { answer: guest.answer } };
+      return {
+        status: 200,
+        body: {
+          answer: await readAnswer(room.code, guest),
+          candidates: await readCandidates(room.code, guest, "host")
+        }
+      };
     }
     return { status: 400, body: { error: "Unknown room request." } };
   } catch (error) {
@@ -92,7 +117,44 @@ async function loadRoom(code) {
   if (!redisCredentials()) return memory.get(code) ?? null;
   const raw = await redis(["GET", key(code)]);
   if (!raw) return null;
-  return JSON.parse(raw);
+  const room = JSON.parse(raw);
+  for (const guest of room.guests) {
+    guest.fromGuest ??= [];
+    guest.fromHost ??= [];
+  }
+  return room;
+}
+async function readAnswer(code, guest) {
+  if (!redisCredentials()) return guest.answer;
+  const raw = await redis(["GET", answerKey(code, guest.id)]);
+  return typeof raw === "string" ? raw : guest.answer;
+}
+async function writeAnswer(code, guest, answer) {
+  guest.answer = answer;
+  if (!redisCredentials()) return;
+  await redis(["SET", answerKey(code, guest.id), answer, "EX", String(ROOM_TTL_SECONDS)]);
+}
+async function readCandidates(code, guest, side) {
+  if (!redisCredentials()) return side === "guest" ? guest.fromGuest : guest.fromHost;
+  const raw = await redis(["LRANGE", iceKey(code, guest.id, side), "0", "-1"]);
+  return Array.isArray(raw) ? raw.filter((item) => typeof item === "string") : [];
+}
+async function pushCandidate(code, guest, side, candidate) {
+  if (!redisCredentials()) {
+    const list = side === "guest" ? guest.fromGuest : guest.fromHost;
+    if (!list.includes(candidate)) list.push(candidate);
+    return;
+  }
+  const slot = iceKey(code, guest.id, side);
+  await redis(["RPUSH", slot, candidate]);
+  await redis(["LTRIM", slot, "-40", "-1"]);
+  await redis(["EXPIRE", slot, String(ROOM_TTL_SECONDS)]);
+}
+function answerKey(code, guestId) {
+  return `texas42:answer:${code}:${guestId}`;
+}
+function iceKey(code, guestId, side) {
+  return `texas42:ice:${code}:${guestId}:${side}`;
 }
 async function saveRoom(room) {
   if (!redisCredentials()) {

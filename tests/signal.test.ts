@@ -22,16 +22,27 @@ describe("room doorbell", () => {
     const guestId = (joined.body as { guestId: string }).guestId;
 
     const waiting = await handleSignal({ op: "guest", code, guestId });
-    expect(waiting.body).toEqual({ answer: null });
+    expect(waiting.body).toEqual({ answer: null, candidates: [] });
 
     const host = await handleSignal({ op: "host", code });
-    const guests = (host.body as { guests: Array<{ id: string; offer: string }> }).guests;
-    expect(guests).toEqual([{ id: guestId, offer: "v=0\r\noffer", answer: null }]);
+    const guests = (host.body as { guests: Array<{ id: string; offer: string; candidates: string[] }> }).guests;
+    expect(guests).toEqual([{ id: guestId, offer: "v=0\r\noffer", answer: null, candidates: [] }]);
 
     const answered = await handleSignal({ op: "answer", code, guestId, answer: "v=0\r\nanswer" });
     expect(answered.status).toBe(200);
+    const iced = await handleSignal({
+      op: "ice",
+      code,
+      guestId,
+      from: "host",
+      candidate: JSON.stringify({ candidate: "candidate:1 1 udp 1 1.2.3.4 9 typ srflx", sdpMid: "0" }),
+    });
+    expect(iced.status).toBe(200);
     const ready = await handleSignal({ op: "guest", code, guestId });
-    expect(ready.body).toEqual({ answer: "v=0\r\nanswer" });
+    expect(ready.body).toEqual({
+      answer: "v=0\r\nanswer",
+      candidates: [JSON.stringify({ candidate: "candidate:1 1 udp 1 1.2.3.4 9 typ srflx", sdpMid: "0" })],
+    });
   });
 
   it("stops a fourth guest", async () => {

@@ -11,6 +11,10 @@ export interface GuestSlot {
   id: string;
   offer: string;
   answer: string | null;
+  /** ICE candidates the guest discovered after the offer. */
+  fromGuest: string[];
+  /** ICE candidates the host discovered after the answer. */
+  fromHost: string[];
 }
 
 export interface RoomRecord {
@@ -21,7 +25,7 @@ export interface RoomRecord {
 
 const memory = new Map<string, RoomRecord>();
 const ROOM_TTL_SECONDS = 60 * 60 * 6;
-const MAX_OFFER = 20_000;
+const MAX_OFFER = 60_000;
 const ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 
 export async function handleSignal(body: unknown): Promise<{ status: number; body: unknown }> {
@@ -41,7 +45,7 @@ export async function handleSignal(body: unknown): Promise<{ status: number; bod
       const room = await loadRoom(code);
       if (!room) return { status: 404, body: { error: "That room does not exist." } };
       if (room.guests.length >= 3) return { status: 409, body: { error: "That room is full." } };
-      const guest: GuestSlot = { id: makeCode(), offer, answer: null };
+      const guest: GuestSlot = { id: makeCode(), offer, answer: null, fromGuest: [], fromHost: [] };
       room.guests.push(guest);
       await saveRoom(room);
       return { status: 200, body: { guestId: guest.id } };
@@ -49,10 +53,30 @@ export async function handleSignal(body: unknown): Promise<{ status: number; bod
     if (op === "host") {
       const room = await loadRoom(cleanCode(msg.code));
       if (!room) return { status: 404, body: { error: "That room does not exist." } };
-      return {
-        status: 200,
-        body: { guests: room.guests.map((guest) => ({ id: guest.id, offer: guest.offer, answer: guest.answer })) },
-      };
+      const guests: Array<{ id: string; offer: string; answer: string | null; candidates: string[] }> = [];
+      for (const guest of room.guests) {
+        guests.push({
+          id: guest.id,
+          offer: guest.offer,
+          answer: await readAnswer(room.code, guest),
+          candidates: await readCandidates(room.code, guest, "guest"),
+        });
+      }
+      return { status: 200, body: { guests } };
+    }
+    if (op === "ice") {
+      const room = await loadRoom(cleanCode(msg.code));
+      const guestId = typeof msg.guestId === "string" ? msg.guestId : "";
+      const candidate = typeof msg.candidate === "string" ? msg.candidate : "";
+      const side = msg.from === "host" ? "host" : msg.from === "guest" ? "guest" : "";
+      if (!room) return { status: 404, body: { error: "That room does not exist." } };
+      if (!side || candidate.length < 2 || candidate.length > 2_000) {
+        return { status: 400, body: { error: "Missing connection candidate." } };
+      }
+      const guest = room.guests.find((item) => item.id === guestId);
+      if (!guest) return { status: 404, body: { error: "That player is not in the room." } };
+      await pushCandidate(room.code, guest, side, candidate);
+      return { status: 200, body: { ok: true } };
     }
     if (op === "answer") {
       const room = await loadRoom(cleanCode(msg.code));
@@ -64,8 +88,7 @@ export async function handleSignal(body: unknown): Promise<{ status: number; bod
       }
       const guest = room.guests.find((item) => item.id === guestId);
       if (!guest) return { status: 404, body: { error: "That player is not in the room." } };
-      guest.answer = answer;
-      await saveRoom(room);
+      await writeAnswer(room.code, guest, answer);
       return { status: 200, body: { ok: true } };
     }
     if (op === "guest") {
@@ -74,7 +97,13 @@ export async function handleSignal(body: unknown): Promise<{ status: number; bod
       if (!room) return { status: 404, body: { error: "That room does not exist." } };
       const guest = room.guests.find((item) => item.id === guestId);
       if (!guest) return { status: 404, body: { error: "That player is not in the room." } };
-      return { status: 200, body: { answer: guest.answer } };
+      return {
+        status: 200,
+        body: {
+          answer: await readAnswer(room.code, guest),
+          candidates: await readCandidates(room.code, guest, "host"),
+        },
+      };
     }
     return { status: 400, body: { error: "Unknown room request." } };
   } catch (error) {
@@ -122,7 +151,51 @@ async function loadRoom(code: string): Promise<RoomRecord | null> {
   if (!redisCredentials()) return memory.get(code) ?? null;
   const raw = await redis<string | null>(["GET", key(code)]);
   if (!raw) return null;
-  return JSON.parse(raw) as RoomRecord;
+  const room = JSON.parse(raw) as RoomRecord;
+  for (const guest of room.guests) {
+    guest.fromGuest ??= [];
+    guest.fromHost ??= [];
+  }
+  return room;
+}
+
+async function readAnswer(code: string, guest: GuestSlot): Promise<string | null> {
+  if (!redisCredentials()) return guest.answer;
+  const raw = await redis<string | null>(["GET", answerKey(code, guest.id)]);
+  return typeof raw === "string" ? raw : guest.answer;
+}
+
+async function writeAnswer(code: string, guest: GuestSlot, answer: string): Promise<void> {
+  guest.answer = answer;
+  if (!redisCredentials()) return;
+  // The answer lives in its own key so a candidate write cannot erase it.
+  await redis(["SET", answerKey(code, guest.id), answer, "EX", String(ROOM_TTL_SECONDS)]);
+}
+
+async function readCandidates(code: string, guest: GuestSlot, side: "guest" | "host"): Promise<string[]> {
+  if (!redisCredentials()) return side === "guest" ? guest.fromGuest : guest.fromHost;
+  const raw = await redis<string[] | null>(["LRANGE", iceKey(code, guest.id, side), "0", "-1"]);
+  return Array.isArray(raw) ? raw.filter((item) => typeof item === "string") : [];
+}
+
+async function pushCandidate(code: string, guest: GuestSlot, side: "guest" | "host", candidate: string): Promise<void> {
+  if (!redisCredentials()) {
+    const list = side === "guest" ? guest.fromGuest : guest.fromHost;
+    if (!list.includes(candidate)) list.push(candidate);
+    return;
+  }
+  const slot = iceKey(code, guest.id, side);
+  await redis(["RPUSH", slot, candidate]);
+  await redis(["LTRIM", slot, "-40", "-1"]);
+  await redis(["EXPIRE", slot, String(ROOM_TTL_SECONDS)]);
+}
+
+function answerKey(code: string, guestId: string): string {
+  return `texas42:answer:${code}:${guestId}`;
+}
+
+function iceKey(code: string, guestId: string, side: "guest" | "host"): string {
+  return `texas42:ice:${code}:${guestId}:${side}`;
 }
 
 async function saveRoom(room: RoomRecord): Promise<RoomRecord> {
