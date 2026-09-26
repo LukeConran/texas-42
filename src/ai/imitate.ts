@@ -1,5 +1,5 @@
 import { countValue, partnerOf, teamOf, type Domino } from "../engine/domino";
-import { createMatch, type Action, type PlayerView } from "../engine/game";
+import { createMatch, nextRng, type Action, type PlayerView } from "../engine/game";
 import { bestEstimate, estimateHand } from "./evaluate";
 import { chooseAction } from "./heuristic";
 import { benchSettings, playHand } from "./ladder";
@@ -12,6 +12,8 @@ import { classify, trumpKey, TRUMP_CHOICES, winningIndex, type Trump } from "../
  * Scoring a decision is a dot product, so it is fast enough to sit at the table.
  * One input is whether the heuristic would make that choice. The other weights
  * learn where the search disagreed.
+ *
+ * There is one weight per fact: 15 for a bid, 10 for a trump, 19 for a tile.
  */
 
 export interface RankExample {
@@ -82,13 +84,87 @@ export function imitationPolicy(model: ImitationModel, name = "imitate"): Policy
   return {
     name,
     act(view) {
-      if (view.turn !== view.seat) throw new Error(`Seat ${view.seat} is not deciding`);
-      if (view.phase === "bidding") return { type: "bid", amount: pickBid(view, model.bid.w) };
-      if (view.phase === "trump") return { type: "declareTrump", trump: pickTrump(view, model.trump.w) };
-      if (view.phase === "playing") return { type: "play", domino: pickPlay(view, model.play.w) };
-      throw new Error(`No imitation decision in ${view.phase}`);
+      const choices = listChoices(view);
+      return choices.take(bestRow(choices.rows, model[choices.head].w));
     },
   };
+}
+
+export interface DecisionTrace {
+  head: "bid" | "trump" | "play";
+  rows: number[][];
+  chosen: number;
+}
+
+/** Sample a legal choice and remember it so the hand's marks can update the weights. */
+export function sampleChoice(
+  model: ImitationModel,
+  view: PlayerView,
+  rng: { state: number },
+): { action: Action; trace: DecisionTrace | null } {
+  const choices = listChoices(view);
+  const scores = choices.rows.map((row) => dot(model[choices.head].w, row));
+  const chosen = scores.length <= 1 ? 0 : sampleIndex(scores, rng);
+  const trace = scores.length > 1 ? { head: choices.head, rows: choices.rows, chosen } : null;
+  return { action: choices.take(chosen), trace };
+}
+
+/** Move the weights toward the chosen row when the hand won marks, and away when it lost. */
+export function reinforceUpdate(
+  vector: WeightVector,
+  rows: number[][],
+  chosen: number,
+  advantage: number,
+  lr: number,
+): void {
+  if (rows.length <= 1 || advantage === 0 || chosen < 0 || chosen >= rows.length) return;
+  const scores = rows.map((row) => dot(vector.w, row));
+  const p = softmax(scores);
+  for (let j = 0; j < vector.w.length; j++) {
+    let expected = 0;
+    for (let i = 0; i < rows.length; i++) expected += p[i]! * (rows[i]![j] ?? 0);
+    const grad = (rows[chosen]![j] ?? 0) - expected;
+    vector.w[j] = (vector.w[j] ?? 0) + lr * advantage * grad;
+  }
+}
+
+export function listChoices(view: PlayerView): {
+  head: "bid" | "trump" | "play";
+  rows: number[][];
+  take(index: number): Action;
+} {
+  if (view.turn !== view.seat) throw new Error(`Seat ${view.seat} is not deciding`);
+  if (view.phase === "bidding") {
+    const hint = chooseAction(view, { margin: 0 });
+    const hintAmount = hint.type === "bid" ? hint.amount : "pass";
+    const amounts = view.legalBids;
+    return {
+      head: "bid",
+      rows: amounts.map((amount) => bidCandidate(view, amount, hintAmount)),
+      take: (index) => ({ type: "bid", amount: amounts[index] ?? "pass" }),
+    };
+  }
+  if (view.phase === "trump") {
+    const hint = chooseAction(view, { margin: 0 });
+    const hintKey = hint.type === "declareTrump" ? trumpKey(hint.trump) : "";
+    return {
+      head: "trump",
+      rows: TRUMP_CHOICES.map((trump) => trumpCandidate(view, trump, hintKey)),
+      take: (index) => ({ type: "declareTrump", trump: TRUMP_CHOICES[index] ?? TRUMP_CHOICES[0]! }),
+    };
+  }
+  if (view.phase === "playing") {
+    const legal = view.legalPlays;
+    if (legal.length === 0) throw new Error("No legal play");
+    const hint = chooseAction(view, { margin: 0 });
+    const hintKey = hint.type === "play" ? `${hint.domino.hi}-${hint.domino.lo}` : "";
+    return {
+      head: "play",
+      rows: legal.map((domino) => playCandidate(view, domino, hintKey)),
+      take: (index) => ({ type: "play", domino: legal[index] ?? legal[0]! }),
+    };
+  }
+  throw new Error(`No imitation decision in ${view.phase}`);
 }
 
 export function modelToJson(model: ImitationModel): string {
@@ -186,27 +262,16 @@ function bestRow(rows: number[][], w: number[]): number {
   return best;
 }
 
-function pickBid(view: PlayerView, w: number[]): number | "pass" {
-  const hint = chooseAction(view, { margin: 0 });
-  const hintAmount = hint.type === "bid" ? hint.amount : "pass";
-  const rows = view.legalBids.map((amount) => bidCandidate(view, amount, hintAmount));
-  return view.legalBids[bestRow(rows, w)] ?? "pass";
-}
-
-function pickTrump(view: PlayerView, w: number[]): Trump {
-  const hint = chooseAction(view, { margin: 0 });
-  const hintKey = hint.type === "declareTrump" ? trumpKey(hint.trump) : "";
-  const rows = TRUMP_CHOICES.map((trump) => trumpCandidate(view, trump, hintKey));
-  return TRUMP_CHOICES[bestRow(rows, w)] ?? TRUMP_CHOICES[0]!;
-}
-
-function pickPlay(view: PlayerView, w: number[]): Domino {
-  const legal = view.legalPlays;
-  if (legal.length === 0) throw new Error("No legal play");
-  const hint = chooseAction(view, { margin: 0 });
-  const hintKey = hint.type === "play" ? `${hint.domino.hi}-${hint.domino.lo}` : "";
-  const rows = legal.map((domino) => playCandidate(view, domino, hintKey));
-  return legal[bestRow(rows, w)] ?? legal[0]!;
+function sampleIndex(scores: number[], rng: { state: number }): number {
+  const weights = softmax(scores);
+  const draw = nextRng(rng.state);
+  rng.state = draw.state;
+  let cursor = draw.value;
+  for (let i = 0; i < weights.length; i++) {
+    cursor -= weights[i]!;
+    if (cursor <= 0) return i;
+  }
+  return weights.length - 1;
 }
 
 function bidCandidate(view: PlayerView, amount: number | "pass", hint: number | "pass"): number[] {
