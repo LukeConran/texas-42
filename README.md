@@ -38,7 +38,9 @@ Nello, sevens, plunge, and splash are not in this version.
 
 The measuring table is the first rung. The second rung, `src/ai/search.ts`, deals the cards still out several times, tries each legal bid or play, and keeps the choice that wins more marks against the heuristic. Run `npm run search`. That plays 8 deals, sampling 16 hidden hands at each decision. `npm run search -- 24 32` raises the deal count and the sample count. Each deal is played twice with the teams swapped. The table in the browser still uses the heuristic, because the search is too slow for a click.
 
-A later rung can copy that search into a fast policy, then train on the team award at the end of the hand.
+The third rung fits weights to those search choices so a later decision is a dot product instead of another search. Run `npm run imitate`. That watches the search play 48 hands, sampling 16 hidden hands at each decision, writes the weights to `src/ai/imitate.json`, and scores the copy against the heuristic on 16 fresh deals. `npm run imitate -- 80 16` learns from more hands. The table in the browser still uses the heuristic.
+
+A later rung can keep training those weights on the marks won at the end of the hand.
 
 ## Play with friends
 

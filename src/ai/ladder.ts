@@ -13,7 +13,8 @@ import { policiesFor, type Policy, type SeatPolicies } from "./policy";
 /**
  * Rung 1. Play seeded hands and record the team award.
  * Rung 2 (`src/ai/search.ts`) searches the cards still out on these same deals.
- * Later: copy that search into a fast policy, then train on the award at the end of the hand.
+ * Rung 3 (`src/ai/imitate.ts`) fits weights to the choices that search made.
+ * Later: train those weights on the award at the end of the hand.
  */
 
 const HAND_STEP_CAP = 80;

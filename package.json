@@ -8,7 +8,8 @@
     "build": "tsc --noEmit && vite build && node scripts/bundle-room.mjs",
     "preview": "vite preview",
     "test": "node scripts/bundle-room.mjs && vitest run",
-    "search": "node scripts/search-bench.mjs"
+    "search": "node scripts/search-bench.mjs",
+    "imitate": "node scripts/imitate-bench.mjs"
   },
   "devDependencies": {
     "@types/node": "^26.6.3",
