@@ -65,6 +65,16 @@ export function nextSeat(seat: Seat): Seat {
   return ((seat + 1) % 4) as Seat;
 }
 
+/** Clockwise steps from the viewer to `seat`. 0 is the viewer, 1 is on their left. */
+export function seatSteps(viewer: Seat, seat: Seat): 0 | 1 | 2 | 3 {
+  return ((seat - viewer + 4) % 4) as 0 | 1 | 2 | 3;
+}
+
+/** Table place for a seat, with the viewer at the bottom. */
+export function seatPlace(viewer: Seat, seat: Seat): "s" | "w" | "n" | "e" {
+  return (["s", "w", "n", "e"] as const)[seatSteps(viewer, seat)] ?? "s";
+}
+
 export const SEAT_NAMES = ["You", "West", "Partner", "East"] as const;
 
 export function seatName(seat: Seat): string {

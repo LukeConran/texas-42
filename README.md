@@ -36,6 +36,19 @@ Nello, sevens, plunge, and splash are not in this version.
 
 `src/ai/heuristic.ts` is the current opponent. It is a point-count bidder and a trick-taking policy, not a trained agent. A reinforcement-learning policy can replace `chooseAction` without touching the rules. Self-play can call the same functions: the state is plain data, the shuffle is a seeded generator, and legal bids and plays are listed on the view.
 
-## Where multiplayer would plug in
+## Play with friends
 
-The browser is only a client of `apply`. A room on a local network, or a hosted game, would keep `GameState` on the server, accept an `Action` from the seat whose turn it is, and broadcast the view from `observe`. Clients should not be trusted to decide what is legal. Nothing in the engine depends on a single screen, so that server can come later without rewriting the rules.
+The first player hosts the match in their own browser. Friends connect straight to that browser. Empty seats are filled by the same bots as a local game. The host has to leave the tab open until the match is done.
+
+On the menu, choose **Host a room**, then share the four-letter code or the link (`?room=CODE`). The first person to join sits on the host's left, the second sits across as the host's partner, and the third sits on the host's right. **Show hands** is only on the local table. A room never offers it, and a guest only receives their own tiles.
+
+Dominos do not go through the website. The site only introduces the browsers (a short-lived offer and answer), then the match travels on a direct WebRTC connection. Same wifi can do that through the local dev server. People on different networks need the steps below.
+
+## Host it so different networks can play
+
+1. Push this branch and import the GitHub repo in [Vercel](https://vercel.com). Use the Vite preset. Build command `npm run build`, output directory `dist`.
+2. In the Vercel project, add **Upstash Redis** from the Marketplace. That injects `UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN`. Those two values are what let a host and a guest on different machines find each other. Redis stores the room code and the connection handshake for a few hours. It never stores a hand.
+3. Deploy. Open the site, host a room, and send your friend the link. They can be on any network. You both need a normal browser connection; the host's tab is the table.
+4. If the room opens but the guest stays on "Joining" and never sees a hand, both networks are likely blocking the direct connection. Add a TURN relay and redeploy with `VITE_TURN_URL`, `VITE_TURN_USERNAME`, and `VITE_TURN_CREDENTIAL`. Those are baked in at build time, so change them and deploy again.
+
+Local `npm run dev` already answers `/api/signal` in memory, which is enough for two browsers on one computer. A deployed site without the Redis variables only works while every request hits the same server instance.
