@@ -45,7 +45,7 @@ const TRUMP_BUTTONS: Array<{ trump: Trump; label: string; hint: string }> = [
 
 export function mount(root: HTMLElement): void {
   let screen: "menu" | "table" = "menu";
-  let scoringMode: ScoringMode = "points";
+  let scoringMode: ScoringMode = "marks";
   let openingLeadMustBeTrump = false;
   let showHands = false;
   let soundOn = false;
@@ -188,7 +188,7 @@ export function mount(root: HTMLElement): void {
 
   function menuHtml(): string {
     return `
-      <div class="room">
+      <div class="room menu-room">
         <header class="topbar">
           <p class="brand">Texas 42</p>
           <p class="brand-sub">Official state domino game</p>
@@ -200,8 +200,8 @@ export function mount(root: HTMLElement): void {
             <fieldset>
               <legend>Match</legend>
               <div class="choice-row">
-                ${choice("mode", "points", "Points to 250", scoringMode === "points")}
                 ${choice("mode", "marks", "Marks to 7", scoringMode === "marks")}
+                ${choice("mode", "points", "Points to 250", scoringMode === "points")}
               </div>
             </fieldset>
             <button type="button" class="check ${openingLeadMustBeTrump ? "on" : ""}" data-act="house">
@@ -261,13 +261,14 @@ export function mount(root: HTMLElement): void {
                 </div>
                 <div class="south-plate ${game.turn === 0 ? "active" : ""}">
                   <span>You</span>
-                  <em>${escapeHtml(playerBid(game, 0))}</em>
+                  ${game.phase === "bidding" && game.shaker === 0 ? "<em>shook</em>" : ""}
                 </div>
               </div>
             </div>
             <div class="dock">
               ${dockHtml(game)}
             </div>
+            ${yourBidRow(game)}
             <div class="your-hand" aria-label="Your hand">
               ${yourHandHtml(game)}
             </div>
@@ -283,10 +284,11 @@ export function mount(root: HTMLElement): void {
   }
 
   function paceButtons(): string {
+    const labels: Record<Pace, string> = { relaxed: "Slow", normal: "Normal", fast: "Fast" };
     return (Object.keys(PACE_MS) as Pace[])
       .map(
         (name) =>
-          `<button type="button" class="tool ${pace === name ? "on" : ""}" data-act="pace" data-pace="${name}">${name}</button>`,
+          `<button type="button" class="tool ${pace === name ? "on" : ""}" data-act="pace" data-pace="${name}">${labels[name]}</button>`,
       )
       .join("");
   }
@@ -305,10 +307,13 @@ export function mount(root: HTMLElement): void {
       .join("");
     return `
       <div class="seat seat-${place} ${active ? "active" : ""} ${showHands ? "open" : ""} ${teamOf(seat) === 0 ? "team-us" : "team-them"}">
-        <div class="seat-tiles">${tiles}</div>
+        <div class="seat-stack">
+          <div class="seat-tiles">${tiles}</div>
+          ${bidChip(game, seat)}
+        </div>
         <div class="nameplate">
           <strong>${seatWord(seat)}</strong>
-          <em>${escapeHtml(playerBid(game, seat))}</em>
+          ${game.phase === "bidding" && game.shaker === seat ? "<em>shook</em>" : ""}
           ${game.shaker === seat ? `<span class="shaker">shaker</span>` : ""}
         </div>
       </div>`;
@@ -498,12 +503,16 @@ function choice(act: string, mode: string, label: string, on: boolean): string {
   return `<button type="button" class="choice ${on ? "on" : ""}" data-act="${act}" data-mode="${mode}" aria-pressed="${on}">${label}</button>`;
 }
 
-function playerBid(game: GameState, seat: Seat): string {
+function bidChip(game: GameState, seat: Seat): string {
   const bid = game.bids[seat];
-  if (game.phase === "bidding" && game.turn === seat && bid == null) return "to bid";
-  if (!bid) return game.shaker === seat ? "shakes" : "";
-  if (bid.kind === "pass") return "pass";
-  return `bid ${bid.amount}`;
+  if (!bid) return "";
+  if (bid.kind === "pass") return `<p class="bid-chip pass">Pass</p>`;
+  return `<p class="bid-chip">${bid.amount}</p>`;
+}
+
+function yourBidRow(game: GameState): string {
+  const chip = bidChip(game, 0);
+  return chip ? `<div class="your-bid">${chip}</div>` : "";
 }
 
 function countOutLine(game: GameState): string {
@@ -521,7 +530,7 @@ function countOutLine(game: GameState): string {
 function handBanner(game: GameState): string {
   if (game.phase === "bidding") {
     const high = game.highBid == null ? "no bid yet" : `high bid ${game.highBid}`;
-    return `${seatWord(game.shaker)} shakes · ${high}`;
+    return `${seatWord(game.shaker)} shook · ${high}`;
   }
   const need = needLine(game);
   return [contractLine(game), need].filter(Boolean).join(" · ");

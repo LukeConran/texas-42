@@ -114,6 +114,9 @@ h1, h2, h3, .brand, .scoreline strong, .result-card h2 {
 
 .seat { display: flex; flex-direction: column; align-items: center; gap: 6px; min-width: 0; }
 .seat-north { align-self: center; }
+.seat-stack { display: grid; place-items: center; }
+.seat-stack .seat-tiles,
+.seat-stack .bid-chip { grid-area: 1 / 1; }
 .seat-tiles { display: flex; justify-content: center; align-items: center; }
 .seat-west .seat-tiles, .seat-east .seat-tiles { flex-direction: column; }
 .seat:not(.open) .seat-west .bone + .bone,
@@ -152,8 +155,26 @@ h1, h2, h3, .brand, .scoreline strong, .result-card h2 {
   border-radius: 999px;
   padding: 4px 14px;
 }
-.south-plate em { font-style: normal; color: var(--muted); }
+.south-plate em { font-style: normal; color: var(--gold); }
 .south-plate.active { box-shadow: 0 0 0 1px var(--gold); color: var(--gold); }
+.bid-chip {
+  z-index: 3;
+  margin: 0;
+  min-width: 58px;
+  padding: 7px 12px;
+  border-radius: 14px;
+  background: rgba(28, 20, 16, 0.92);
+  border: 1px solid rgba(230, 194, 122, 0.65);
+  color: var(--cream);
+  font-family: "Fraunces", Georgia, serif;
+  font-size: 1.45rem;
+  line-height: 1;
+  text-align: center;
+  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.35);
+  pointer-events: none;
+}
+.bid-chip.pass { font-size: 1.15rem; letter-spacing: 0.02em; }
+.your-bid { display: flex; justify-content: center; padding-top: 6px; }
 
 .trick-wrap { text-align: center; min-width: 0; }
 .status {
@@ -407,12 +428,22 @@ button.tile:disabled {
 .result-score { font-size: 1.15rem; }
 .winner { color: var(--good); font-size: 1.2rem; }
 
+.menu-room {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
 .menu-layout {
   display: grid;
-  grid-template-columns: minmax(0, 640px) minmax(0, 460px);
-  gap: 18px;
+  grid-template-columns: minmax(280px, 620px);
+  align-content: center;
   justify-content: center;
-  padding: 12px 18px 40px;
+  flex: 1;
+  gap: 18px;
+  padding: 24px 18px 48px;
+}
+.menu-layout:has(.rules-card) {
+  grid-template-columns: minmax(0, 620px) minmax(260px, 420px);
 }
 .menu-card h1 { margin: 0 0 8px; font-size: clamp(2rem, 4vw, 3.1rem); line-height: 1.05; }
 .lede { font-size: 1.05rem; color: var(--muted); }

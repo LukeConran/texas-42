@@ -489,7 +489,7 @@ function dealHand(state: GameState): GameState {
     lastResult: null,
     log: appendLog(
       state.log,
-      `Hand ${handNumber}. ${actor(state.shaker, "shakes", "shake")}. ${actor(bidLeader, "bids", "bid")} first.`,
+      `Hand ${handNumber}. ${actor(state.shaker, "shook", "shook")}. ${actor(bidLeader, "bids", "bid")} first.`,
     ),
   };
 }
