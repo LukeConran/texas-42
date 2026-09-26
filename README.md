@@ -34,7 +34,9 @@ Nello, sevens, plunge, and splash are not in this version.
 
 `observe(state, seat)` builds a `PlayerView` that contains that seat's hand and everything on the table, and not the other hands. `chooseAction(view)` returns a bid, a trump, or a play. `apply(state, action)` is the only way the match changes, and it rejects a renege.
 
-`src/ai/heuristic.ts` is the current opponent. It is a point-count bidder and a trick-taking policy, not a trained agent. A reinforcement-learning policy can replace `chooseAction` without touching the rules. Self-play can call the same functions: the state is plain data, the shuffle is a seeded generator, and legal bids and plays are listed on the view.
+`src/ai/heuristic.ts` is the current opponent. It is a point-count bidder and a trick-taking policy, not a trained agent. `src/ai/policy.ts` is the slot a later bot fills, and it still sees only that view. `src/ai/ladder.ts` plays seeded hands and records each team's award. The same deals are replayed with the two policies swapped, so a new bot has to win the award rather than draw lucky cards.
+
+The measuring table is the first rung. Next is search over the cards still out, then a fast copy of that search, then self-play trained on the team award at the end of the hand.
 
 ## Play with friends
 
