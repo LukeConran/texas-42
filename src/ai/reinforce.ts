@@ -1,5 +1,6 @@
 import { createMatch, type Action, type PlayerView } from "../engine/game";
 import {
+  declinedHeuristicBid,
   imitationPolicy,
   modelFromJson,
   modelToJson,
@@ -13,7 +14,8 @@ import { heuristicPolicy, type Policy, type SeatPolicies } from "./policy";
 
 /**
  * Rung 4. Start from the imitation weights and nudge them by the marks
- * the learning team won. A hand that everyone passed teaches nothing.
+ * the learning team won. A hand that everyone passed teaches nothing,
+ * except a seat that passed a hand the heuristic would have bid.
  * The saved file changes only when a fresh duel beats the heuristic and
  * the weights this run started from.
  */
@@ -35,6 +37,8 @@ export interface ReinforceResult {
   accepted: boolean;
   versusHeuristic: DuelResult;
   versusPrevious: DuelResult;
+  /** Training hands in which every seat passed. */
+  trainingPasses: number;
 }
 
 export function reinforce(start: ImitationModel, options: ReinforceOptions = {}): ReinforceResult {
@@ -46,6 +50,7 @@ export function reinforce(start: ImitationModel, options: ReinforceOptions = {})
   const frozen = modelFromJson(modelToJson(start));
   const rng = { state: seed >>> 0 || 1 };
   let baseline = 0;
+  let trainingPasses = 0;
 
   for (let i = 0; i < hands; i++) {
     const learnerTeam = i % 2;
@@ -60,7 +65,13 @@ export function reinforce(start: ImitationModel, options: ReinforceOptions = {})
     const done = playHand(createMatch(benchSettings((seed + i) >>> 0 || 1, "marks")), seats);
     const result = done.lastResult;
     if (!result) throw new Error("The hand ended without a result");
-    if (!result.passed) {
+    if (result.passed) {
+      trainingPasses += 1;
+      for (const trace of traces) {
+        if (!declinedHeuristicBid(trace)) continue;
+        reinforceUpdate(learner.bid, trace.rows, trace.chosen, -1, lr);
+      }
+    } else {
       const other = learnerTeam === 0 ? 1 : 0;
       const raw = result.awarded[learnerTeam] - result.awarded[other];
       const advantage = clamp(raw - baseline, -2, 2);
@@ -78,7 +89,7 @@ export function reinforce(start: ImitationModel, options: ReinforceOptions = {})
   const versusPrevious = duel(evalSeeds, greedy, imitationPolicy(frozen, "previous"));
   const accepted =
     versusHeuristic.awardA > versusHeuristic.awardB && versusPrevious.awardA > versusPrevious.awardB;
-  return { model: learner, accepted, versusHeuristic, versusPrevious };
+  return { model: learner, accepted, versusHeuristic, versusPrevious, trainingPasses };
 }
 
 function samplingPolicy(

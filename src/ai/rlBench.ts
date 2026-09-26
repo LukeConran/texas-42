@@ -35,11 +35,12 @@ const result = reinforce(start, {
 
 const seconds = ((Date.now() - started) / 1000).toFixed(1);
 const deals = result.versusHeuristic.hands / 2;
+console.log(`Training hands where everyone passed: ${result.trainingPasses} of ${hands}.`);
 console.log(
-  `Held-out ${deals} deals vs heuristic: learned ${result.versusHeuristic.awardA}, heuristic ${result.versusHeuristic.awardB}.`,
+  `Held-out ${deals} deals vs heuristic: learned ${result.versusHeuristic.awardA}, heuristic ${result.versusHeuristic.awardB}. ${result.versusHeuristic.passes} of ${result.versusHeuristic.hands} hands passed.`,
 );
 console.log(
-  `Held-out ${deals} deals vs previous weights: learned ${result.versusPrevious.awardA}, previous ${result.versusPrevious.awardB}.`,
+  `Held-out ${deals} deals vs previous weights: learned ${result.versusPrevious.awardA}, previous ${result.versusPrevious.awardB}. ${result.versusPrevious.passes} of ${result.versusPrevious.hands} hands passed.`,
 );
 if (result.accepted) {
   writeFileSync(outPath, modelToJson(result.model));

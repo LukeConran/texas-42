@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { listChoices, modelFromJson, modelToJson, reinforceUpdate, type WeightVector } from "../src/ai/imitate";
+import {
+  declinedHeuristicBid,
+  listChoices,
+  modelFromJson,
+  modelToJson,
+  reinforceUpdate,
+  type DecisionTrace,
+  type WeightVector,
+} from "../src/ai/imitate";
 import { benchSettings } from "../src/ai/ladder";
 import { reinforce } from "../src/ai/reinforce";
 import { createMatch, observe } from "../src/engine/game";
@@ -33,6 +41,19 @@ describe("reinforce", () => {
     expect(still.w).toEqual([0, 1]);
   });
 
+  it("treats a pass the heuristic would not make as a declined bid", () => {
+    const trace: DecisionTrace = {
+      head: "bid",
+      rows: [
+        [1, 1, 0, 0, 0, 0],
+        [1, 0, 0.2, 0, 0, 1],
+      ],
+      chosen: 0,
+    };
+    expect(declinedHeuristicBid(trace)).toBe(true);
+    expect(declinedHeuristicBid({ ...trace, chosen: 1 })).toBe(false);
+  });
+
   it("lists fifteen facts for the opening bid", () => {
     const state = createMatch(benchSettings(11, "marks"));
     const seat = state.turn;
@@ -41,6 +62,11 @@ describe("reinforce", () => {
     expect(choices.head).toBe("bid");
     expect(choices.rows[0]?.length).toBe(15);
     expect(choices.rows.length).toBeGreaterThan(1);
+    const passIndex = choices.rows.findIndex((row) => row[1] === 1);
+    const hintIndex = choices.rows.findIndex((row) => row[5] === 1);
+    expect(passIndex).toBeGreaterThanOrEqual(0);
+    expect(hintIndex).toBeGreaterThanOrEqual(0);
+    expect(declinedHeuristicBid({ head: "bid", rows: choices.rows, chosen: passIndex })).toBe(passIndex !== hintIndex);
   });
 
   it("finishes a short run with finite weights", () => {
