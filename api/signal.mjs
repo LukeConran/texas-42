@@ -1,6 +1,9 @@
 // src/server/signal.ts
 var memory = /* @__PURE__ */ new Map();
+var mailboxes = /* @__PURE__ */ new Map();
 var ROOM_TTL_SECONDS = 60 * 60 * 6;
+var STALE_MS = 18e4;
+var HEARTBEAT_MS = 8e3;
 var MAX_OFFER = 6e4;
 var ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 async function handleSignal(body) {
@@ -8,8 +11,15 @@ async function handleSignal(body) {
   const op = typeof msg.op === "string" ? msg.op : "";
   try {
     if (op === "create") {
-      const room = await saveRoom({ code: makeCode(), createdAt: Date.now(), guests: [] });
-      return { status: 200, body: { code: room.code } };
+      const now = Date.now();
+      const room = await saveRoom({
+        code: makeCode(),
+        createdAt: now,
+        hostId: makeSecret(),
+        hostSeen: now,
+        guests: []
+      });
+      return { status: 200, body: { code: room.code, hostId: room.hostId } };
     }
     if (op === "join") {
       const code = cleanCode(msg.code);
@@ -79,6 +89,102 @@ async function handleSignal(body) {
           candidates: await readCandidates(room.code, guest, "host")
         }
       };
+    }
+    if (op === "enter") {
+      const code = cleanCode(msg.code);
+      const room = await loadRoom(code);
+      if (!room) return { status: 404, body: { error: "That room does not exist." } };
+      if (Date.now() - room.hostSeen > STALE_MS) {
+        return { status: 404, body: { error: "The host closed the room." } };
+      }
+      const now = Date.now();
+      const live = (await listMailGuests(code)).filter((guest) => now - guest.lastSeen <= STALE_MS);
+      if (live.length >= 3) return { status: 409, body: { error: "That room is full." } };
+      const name = cleanPlayerName(msg.name);
+      const guestId = makeSecret();
+      await rememberGuest(code, { id: guestId, name, enteredAt: now, lastSeen: now, toHost: [], toGuest: [] });
+      return { status: 200, body: { guestId } };
+    }
+    if (op === "post") {
+      const code = cleanCode(msg.code);
+      const guestId = typeof msg.guestId === "string" ? msg.guestId : "";
+      const box = msg.box === "toHost" || msg.box === "toGuest" ? msg.box : "";
+      const text = typeof msg.body === "string" ? msg.body : "";
+      const guest = await findMailGuest(code, guestId);
+      if (!guest || !box) return { status: 404, body: { error: "That player is not in the room." } };
+      if (box === "toGuest") {
+        const room = await loadRoom(code);
+        if (!room || !hostMatches(room, msg.hostId)) {
+          return { status: 403, body: { error: "Only the host can send that." } };
+        }
+      }
+      if (text.length < 1 || text.length > 1e5) return { status: 400, body: { error: "That message cannot be delivered." } };
+      guest.lastSeen = Date.now();
+      await saveMailGuest(code, guest);
+      await pushMail(code, guest, box, text);
+      return { status: 200, body: { ok: true } };
+    }
+    if (op === "hostBox") {
+      const code = cleanCode(msg.code);
+      const room = await loadRoom(code);
+      if (!room) return { status: 404, body: { error: "That room does not exist." } };
+      if (!hostMatches(room, msg.hostId)) return { status: 403, body: { error: "Only the host can read that." } };
+      await touchHost(room);
+      const after = afterMap(msg.after);
+      const guests = await listMailGuests(code);
+      const mail = [];
+      for (const guest of guests) {
+        const seen = after[guest.id] ?? 0;
+        const items = await readMail(code, guest, "toHost", seen);
+        for (const item of items) mail.push({ guestId: guest.id, n: item.n, body: item.body });
+      }
+      return {
+        status: 200,
+        body: {
+          now: Date.now(),
+          guests: guests.map((guest) => ({
+            id: guest.id,
+            name: guest.name,
+            lastSeen: guest.lastSeen,
+            enteredAt: guest.enteredAt
+          })),
+          mail
+        }
+      };
+    }
+    if (op === "guestBox") {
+      const code = cleanCode(msg.code);
+      const room = await loadRoom(code);
+      if (!room) return { status: 404, body: { error: "That room does not exist." } };
+      if (Date.now() - room.hostSeen > STALE_MS) {
+        return { status: 404, body: { error: "The host closed the room." } };
+      }
+      const guestId = typeof msg.guestId === "string" ? msg.guestId : "";
+      const guest = await findMailGuest(code, guestId);
+      if (!guest) return { status: 404, body: { error: "That player is not in the room." } };
+      const now = Date.now();
+      if (now - guest.lastSeen > HEARTBEAT_MS) {
+        guest.lastSeen = now;
+        await saveMailGuest(code, guest);
+      }
+      const after = typeof msg.after === "number" && msg.after > 0 ? Math.floor(msg.after) : 0;
+      const items = await readMail(code, guest, "toGuest", after);
+      return { status: 200, body: { mail: items } };
+    }
+    if (op === "leave") {
+      const code = cleanCode(msg.code);
+      const guestId = typeof msg.guestId === "string" ? msg.guestId : "";
+      if (code && guestId) await forgetGuest(code, guestId);
+      return { status: 200, body: { ok: true } };
+    }
+    if (op === "close") {
+      const code = cleanCode(msg.code);
+      const room = await loadRoom(code);
+      if (!room || !hostMatches(room, msg.hostId)) {
+        return { status: 404, body: { error: "That room does not exist." } };
+      }
+      await deleteRoom(code);
+      return { status: 200, body: { ok: true } };
     }
     return { status: 400, body: { error: "Unknown room request." } };
   } catch (error) {
@@ -189,6 +295,134 @@ async function redis(command) {
   }
   if (!response.ok || payload.error) throw new Error(payload.error || "The room store rejected the request.");
   return payload.result;
+}
+function hostMatches(room, value) {
+  return typeof value === "string" && value.length > 0 && value === room.hostId;
+}
+async function touchHost(room) {
+  const now = Date.now();
+  if (now - room.hostSeen < HEARTBEAT_MS) return;
+  room.hostSeen = now;
+  await saveRoom(room);
+}
+async function deleteRoom(code) {
+  if (!redisCredentials()) {
+    memory.delete(code);
+    mailboxes.delete(code);
+    return;
+  }
+  await redis(["DEL", key(code)]);
+}
+function makeSecret() {
+  let id = "";
+  for (let i = 0; i < 16; i++) id += ALPHABET[Math.floor(Math.random() * ALPHABET.length)];
+  return id;
+}
+function cleanPlayerName(value) {
+  if (typeof value !== "string") return "";
+  return value.replace(/\s+/g, " ").trim().slice(0, 16);
+}
+function afterMap(value) {
+  const record = asRecord(value);
+  const out = {};
+  for (const [id, n] of Object.entries(record)) {
+    if (typeof n === "number" && Number.isFinite(n) && n >= 0) out[id] = Math.floor(n);
+  }
+  return out;
+}
+function mailMap(code) {
+  let box = mailboxes.get(code);
+  if (!box) {
+    box = /* @__PURE__ */ new Map();
+    mailboxes.set(code, box);
+  }
+  return box;
+}
+function guestSetKey(code) {
+  return `texas42:guests:${code}`;
+}
+function guestMetaKey(code, guestId) {
+  return `texas42:guest:${code}:${guestId}`;
+}
+function mailListKey(code, guestId, box) {
+  return `texas42:mail:${code}:${guestId}:${box}`;
+}
+async function listMailGuests(code) {
+  if (!redisCredentials()) return [...mailboxes.get(code)?.values() ?? []];
+  const ids = await redis(["SMEMBERS", guestSetKey(code)]);
+  const guests = [];
+  for (const id of Array.isArray(ids) ? ids : []) {
+    const guest = await loadRedisGuest(code, id);
+    if (guest) guests.push(guest);
+  }
+  return guests;
+}
+async function findMailGuest(code, guestId) {
+  if (!guestId) return null;
+  if (!redisCredentials()) return mailboxes.get(code)?.get(guestId) ?? null;
+  return loadRedisGuest(code, guestId);
+}
+async function loadRedisGuest(code, guestId) {
+  const raw = await redis(["GET", guestMetaKey(code, guestId)]);
+  if (!raw) return null;
+  const meta = JSON.parse(raw);
+  return {
+    id: guestId,
+    name: typeof meta.name === "string" ? meta.name : "",
+    enteredAt: typeof meta.enteredAt === "number" ? meta.enteredAt : 0,
+    lastSeen: typeof meta.lastSeen === "number" ? meta.lastSeen : 0,
+    toHost: [],
+    toGuest: []
+  };
+}
+async function rememberGuest(code, guest) {
+  if (!redisCredentials()) {
+    mailMap(code).set(guest.id, guest);
+    return;
+  }
+  await redis(["SADD", guestSetKey(code), guest.id]);
+  await redis(["EXPIRE", guestSetKey(code), String(ROOM_TTL_SECONDS)]);
+  await saveMailGuest(code, guest);
+}
+async function saveMailGuest(code, guest) {
+  if (!redisCredentials()) {
+    mailMap(code).set(guest.id, guest);
+    return;
+  }
+  await redis([
+    "SET",
+    guestMetaKey(code, guest.id),
+    JSON.stringify({ name: guest.name, enteredAt: guest.enteredAt, lastSeen: guest.lastSeen }),
+    "EX",
+    String(ROOM_TTL_SECONDS)
+  ]);
+}
+async function pushMail(code, guest, box, message) {
+  if (!redisCredentials()) {
+    (box === "toHost" ? guest.toHost : guest.toGuest).push(message);
+    return;
+  }
+  const slot = mailListKey(code, guest.id, box);
+  await redis(["RPUSH", slot, message]);
+  await redis(["EXPIRE", slot, String(ROOM_TTL_SECONDS)]);
+}
+async function forgetGuest(code, guestId) {
+  if (!redisCredentials()) {
+    mailboxes.get(code)?.delete(guestId);
+    return;
+  }
+  await redis(["SREM", guestSetKey(code), guestId]);
+  await redis(["DEL", guestMetaKey(code, guestId)]);
+}
+async function readMail(code, guest, box, start) {
+  const from = start > 0 ? start : 0;
+  if (!redisCredentials()) {
+    const list2 = box === "toHost" ? guest.toHost : guest.toGuest;
+    return list2.map((body, n) => ({ n, body })).filter((item) => item.n >= from);
+  }
+  const raw = await redis(["LRANGE", mailListKey(code, guest.id, box), String(from), "-1"]);
+  const list = Array.isArray(raw) ? raw.filter((body) => typeof body === "string") : [];
+  return list.map((body, i) => ({ n: from + i, body }));
 }
 
 // src/server/roomFunction.ts
