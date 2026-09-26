@@ -40,7 +40,7 @@ The measuring table is the first rung. The second rung, `src/ai/search.ts`, deal
 
 The third rung fits weights to those search choices so a later decision is a dot product instead of another search. Run `npm run imitate`. That watches the search play 48 hands, sampling 16 hidden hands at each decision, writes the weights to `src/ai/imitate.json`, and scores the copy against the heuristic on 16 fresh deals. `npm run imitate -- 80 16` learns from more hands. The table in the browser still uses the heuristic.
 
-The fourth rung nudges those same weights from the marks won at the end of the hand. Run `npm run rl`. That plays 80 hands. Half the opponents are the heuristic and half are a frozen copy of the weights you started with. The learning seats sample a legal choice, then the team's marks move the weights. It writes `src/ai/imitate.json` only when the new weights beat both the heuristic and the previous file on 24 fresh deals. `npm run rl -- 160 0.02` trains on more hands; the second number is the step size. The table in the browser still uses the heuristic.
+The fourth rung changes those weights when the change wins more marks against the heuristic. Run `npm run rl`. That spends 30000 hands trying one weight at a time, on deals the fresh sets never see, and remembers the version with the better score. It writes `src/ai/imitate.json` only when that version also beats the starting weights on a second fresh set. `npm run rl -- 100000` spends the longer budget. A second number scales the size of each try; `1` is the normal shake, and `0.05` is much smaller. The table in the browser still uses the heuristic.
 
 ## Play with friends
 

@@ -14,7 +14,7 @@ import { policiesFor, type Policy, type SeatPolicies } from "./policy";
  * Rung 1. Play seeded hands and record the team award.
  * Rung 2 (`src/ai/search.ts`) searches the cards still out on these same deals.
  * Rung 3 (`src/ai/imitate.ts`) fits weights to the choices that search made.
- * Rung 4 (`src/ai/reinforce.ts`) nudges those weights from the marks at the end of the hand.
+ * Rung 4 (`src/ai/reinforce.ts`) keeps weight changes that win more marks against the heuristic.
  */
 
 const HAND_STEP_CAP = 80;
@@ -57,6 +57,8 @@ export interface DuelResult {
   /** Marks or points won while sitting as a team, summed over both seatings. */
   awardA: number;
   awardB: number;
+  /** Hands in which every seat passed, so neither team scored. */
+  passes: number;
 }
 
 const BANDS = ["pass", "30-35", "36-41", "42", "84", "126", "168"] as const;
@@ -133,14 +135,17 @@ export function duel(seeds: readonly number[], a: Policy, b: Policy, scoringMode
   let awardA = 0;
   let awardB = 0;
   let hands = 0;
+  let passes = 0;
   for (const seed of seeds) {
     const first = toRecord(seed, playHand(createMatch(benchSettings(seed, scoringMode)), [a, b, a, b]));
     const second = toRecord(seed, playHand(createMatch(benchSettings(seed, scoringMode)), [b, a, b, a]));
     awardA += first.awarded[0] + second.awarded[1];
     awardB += first.awarded[1] + second.awarded[0];
+    if (first.passed) passes += 1;
+    if (second.passed) passes += 1;
     hands += 2;
   }
-  return { hands, awardA, awardB };
+  return { hands, awardA, awardB, passes };
 }
 
 export function summarize(records: readonly HandRecord[]): LadderSummary {

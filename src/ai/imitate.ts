@@ -96,6 +96,17 @@ export interface DecisionTrace {
   chosen: number;
 }
 
+/** A bid row's pass bit and its "matches the heuristic" bit. */
+const BID_PASS = 1;
+const BID_MATCHES_HEURISTIC = 5;
+
+/** The seat passed, and the heuristic would have bid on that same hand. */
+export function declinedHeuristicBid(trace: DecisionTrace): boolean {
+  if (trace.head !== "bid") return false;
+  const row = trace.rows[trace.chosen];
+  return row != null && row[BID_PASS] === 1 && row[BID_MATCHES_HEURISTIC] !== 1;
+}
+
 /** Sample a legal choice and remember it so the hand's marks can update the weights. */
 export function sampleChoice(
   model: ImitationModel,
