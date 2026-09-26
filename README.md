@@ -36,7 +36,9 @@ Nello, sevens, plunge, and splash are not in this version.
 
 `src/ai/heuristic.ts` is the current opponent. It is a point-count bidder and a trick-taking policy, not a trained agent. `src/ai/policy.ts` is the slot a later bot fills, and it still sees only that view. `src/ai/ladder.ts` plays seeded hands and records each team's award. The same deals are replayed with the two policies swapped, so a new bot has to win the award rather than draw lucky cards.
 
-The measuring table is the first rung. Next is search over the cards still out, then a fast copy of that search, then self-play trained on the team award at the end of the hand.
+The measuring table is the first rung. The second rung, `src/ai/search.ts`, deals the cards still out several times, tries each legal bid or play, and keeps the choice that wins more marks against the heuristic. Run `npm run search`. That plays 8 deals, sampling 16 hidden hands at each decision. `npm run search -- 24 32` raises the deal count and the sample count. Each deal is played twice with the teams swapped. The table in the browser still uses the heuristic, because the search is too slow for a click.
+
+A later rung can copy that search into a fast policy, then train on the team award at the end of the hand.
 
 ## Play with friends
 
