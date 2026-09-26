@@ -1,10 +1,12 @@
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
+import { appendRun, captureBands, captureSamples, weightL1, writeSamples } from "./history";
 import { duel } from "./ladder";
 import { heuristicPolicy } from "./policy";
 import {
   collectSearchLessons,
   imitationPolicy,
+  modelFromJson,
   modelToJson,
   trainImitation,
   trainingAccuracy,
@@ -18,6 +20,8 @@ import {
 const hands = positive(process.argv[2], 48);
 const samples = positive(process.argv[3], 16);
 const outPath = "src/ai/imitate.json";
+const previousText = readText(outPath);
+const previous = previousText ? modelFromJson(previousText) : null;
 
 console.log(`Watching the search play ${hands} hands, ${samples} hidden deals at each decision.`);
 const started = Date.now();
@@ -42,15 +46,47 @@ writeFileSync(outPath, modelToJson(model));
 console.log(`Wrote ${model.bid.w.length + model.trump.w.length + model.play.w.length} weights to ${outPath}.`);
 
 const heldOut = Array.from({ length: 16 }, (_, index) => 5000 + index);
-const result = duel(heldOut, imitationPolicy(model), heuristicPolicy({ margin: 0 }, "heuristic"));
+const heuristic = heuristicPolicy({ margin: 0 }, "heuristic");
+const result = duel(heldOut, imitationPolicy(model), heuristic);
+const versusStart = previous ? duel(heldOut, imitationPolicy(previous), heuristic) : undefined;
 const seconds = ((Date.now() - started) / 1000).toFixed(1);
 console.log(
   `Held-out 16 deals (${result.hands} hands, ${seconds}s total): imitate ${result.awardA}, heuristic ${result.awardB}.`,
 );
 console.log("Raise the first number to learn from more hands. Raise the second to copy a steadier search.");
 
+const at = new Date().toISOString();
+const { bands, bandsStart } = captureBands(model, previous);
+appendRun({
+  at,
+  kind: "imitate",
+  hands,
+  lr: 0.15,
+  samples,
+  seed: 1,
+  seconds: Number(seconds),
+  accepted: true,
+  versusHeuristic: result,
+  versusStart,
+  fitAccuracy: accuracy,
+  bands,
+  bandsStart,
+  weightL1: previous ? weightL1(model, previous) : { bid: 0, trump: 0, play: 0 },
+  weights: model,
+});
+writeSamples(at, captureSamples(model));
+console.log("Appended this run to stats/data/runs.jsonl. Open it with npm run stats.");
+
 function positive(value: string | undefined, fallback: number): number {
   const parsed = Number(value);
   if (!Number.isFinite(parsed) || parsed < 1) return fallback;
   return Math.floor(parsed);
+}
+
+function readText(path: string): string | null {
+  try {
+    return readFileSync(path, "utf8");
+  } catch {
+    return null;
+  }
 }

@@ -42,6 +42,8 @@ The third rung fits weights to those search choices so a later decision is a dot
 
 The fourth rung changes those weights when the change wins more marks against the heuristic. Run `npm run rl`. That spends 30000 hands trying one weight at a time, on deals the fresh sets never see, and remembers the version with the better score. It writes `src/ai/imitate.json` only when that version also beats the starting weights on a second fresh set. `npm run rl -- 100000` spends the longer budget. A second number scales the size of each try; `1` is the normal shake, and `0.05` is much smaller. The table in the browser still uses the heuristic.
 
+`npm run imitate` and `npm run rl` append each run to `stats/data/runs.jsonl`, including the mark totals, whether the file was saved, the bid bands, and the weights. They also write a few full hands to `stats/data/samples.json`. `npm run score` measures the weights already on disk and appends that look. `npm run stats` serves a page at http://127.0.0.1:4174 with the margin over time, which runs were saved, the bid bands, the weight vector, and those hands stepped trick by trick.
+
 ## Play with friends
 
 The first player hosts the match in their own browser. Friends join with the room code. Empty seats are filled by the same bots as a local game. The host has to leave the tab open until the match is done.

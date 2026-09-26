@@ -131,6 +131,21 @@ export function playMatch(seed: number, seats: SeatPolicies, scoringMode: Scorin
  * Replay each deal twice, swapping which team sits where.
  * Award A is what the first policy's team won across both seatings.
  */
+/** Both seatings of each deal, in order, for band counts and hand logs. */
+export function duelHands(
+  seeds: readonly number[],
+  a: Policy,
+  b: Policy,
+  scoringMode: ScoringMode = "marks",
+): HandRecord[] {
+  const records: HandRecord[] = [];
+  for (const seed of seeds) {
+    records.push(toRecord(seed, playHand(createMatch(benchSettings(seed, scoringMode)), [a, b, a, b])));
+    records.push(toRecord(seed, playHand(createMatch(benchSettings(seed, scoringMode)), [b, a, b, a])));
+  }
+  return records;
+}
+
 export function duel(seeds: readonly number[], a: Policy, b: Policy, scoringMode: ScoringMode = "marks"): DuelResult {
   let awardA = 0;
   let awardB = 0;

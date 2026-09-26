@@ -1,4 +1,5 @@
 import { readFileSync, writeFileSync } from "node:fs";
+import { appendRun, captureBands, captureSamples, weightL1, writeSamples } from "./history";
 import { modelFromJson, modelToJson } from "./imitate";
 import { reinforce } from "./reinforce";
 
@@ -56,6 +57,28 @@ if (result.accepted) {
 } else {
   console.log(`The best weights did not win more marks on both sets, so ${outPath} was left as it was (${seconds}s).`);
 }
+
+const at = new Date().toISOString();
+const { bands, bandsStart } = captureBands(result.model, start);
+appendRun({
+  at,
+  kind: "rl",
+  hands,
+  lr: step,
+  seed: 40000,
+  seconds: Number(seconds),
+  accepted: result.accepted,
+  versusHeuristic: result.versusHeuristic,
+  versusStart: result.versusStart,
+  confirmation: result.confirmation,
+  confirmationStart: result.confirmationStart,
+  bands,
+  bandsStart,
+  weightL1: weightL1(result.model, start),
+  weights: result.model,
+});
+writeSamples(at, captureSamples(result.model));
+console.log("Appended this run to stats/data/runs.jsonl. Open it with npm run stats.");
 
 function positive(value: string | undefined, fallback: number): number {
   const parsed = Number(value);

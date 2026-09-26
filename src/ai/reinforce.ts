@@ -98,7 +98,7 @@ export function reinforce(start: ImitationModel, options: ReinforceOptions = {})
   const confirmationStart = duel(confirmationSeeds, imitationPolicy(start), heuristic);
   const accepted = margin(bestResult) > margin(versusStart) && margin(confirmation) > margin(confirmationStart);
   return {
-    model: accepted ? best : cloneModel(start),
+    model: best,
     accepted,
     versusHeuristic: bestResult,
     versusStart,

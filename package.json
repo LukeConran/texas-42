@@ -10,7 +10,9 @@
     "test": "node scripts/bundle-room.mjs && vitest run",
     "search": "node scripts/search-bench.mjs",
     "imitate": "node scripts/imitate-bench.mjs",
-    "rl": "node scripts/rl-bench.mjs"
+    "rl": "node scripts/rl-bench.mjs",
+    "score": "node scripts/score-bench.mjs",
+    "stats": "node scripts/stats-server.mjs"
   },
   "devDependencies": {
     "@types/node": "^26.6.3",
