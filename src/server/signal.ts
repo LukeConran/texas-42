@@ -110,20 +110,23 @@ function makeCode(): string {
   return code;
 }
 
-function redisConfigured(): boolean {
-  return Boolean(process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN);
+function redisCredentials(): { url: string; token: string } | null {
+  const url = process.env.UPSTASH_REDIS_REST_URL || process.env.KV_REST_API_URL || "";
+  const token = process.env.UPSTASH_REDIS_REST_TOKEN || process.env.KV_REST_API_TOKEN || "";
+  if (!url || !token) return null;
+  return { url, token };
 }
 
 async function loadRoom(code: string): Promise<RoomRecord | null> {
   if (!code) return null;
-  if (!redisConfigured()) return memory.get(code) ?? null;
+  if (!redisCredentials()) return memory.get(code) ?? null;
   const raw = await redis<string | null>(["GET", key(code)]);
   if (!raw) return null;
   return JSON.parse(raw) as RoomRecord;
 }
 
 async function saveRoom(room: RoomRecord): Promise<RoomRecord> {
-  if (!redisConfigured()) {
+  if (!redisCredentials()) {
     memory.set(room.code, room);
     return room;
   }
@@ -136,16 +139,25 @@ function key(code: string): string {
 }
 
 async function redis<T>(command: string[]): Promise<T> {
-  const url = process.env.UPSTASH_REDIS_REST_URL;
-  const token = process.env.UPSTASH_REDIS_REST_TOKEN;
-  if (!url || !token) throw new Error("Redis is not configured.");
-  const response = await fetch(url, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-    body: JSON.stringify(command),
-  });
-  if (!response.ok) throw new Error("The room store rejected the request.");
-  const payload = (await response.json()) as { result?: T; error?: string };
-  if (payload.error) throw new Error(payload.error);
+  const creds = redisCredentials();
+  if (!creds) throw new Error("Redis is not configured.");
+  let response: Response;
+  try {
+    response = await fetch(creds.url, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${creds.token}`, "Content-Type": "application/json" },
+      body: JSON.stringify(command),
+    });
+  } catch {
+    throw new Error("Could not reach the room store. Check UPSTASH_REDIS_REST_URL.");
+  }
+  const raw = await response.text();
+  let payload: { result?: T; error?: string };
+  try {
+    payload = JSON.parse(raw) as { result?: T; error?: string };
+  } catch {
+    throw new Error("The room store did not return JSON. Use the Upstash REST URL and token, then redeploy.");
+  }
+  if (!response.ok || payload.error) throw new Error(payload.error || "The room store rejected the request.");
   return payload.result as T;
 }

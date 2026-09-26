@@ -10,7 +10,13 @@ async function post(body: unknown): Promise<Record<string, unknown>> {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
-  const payload = (await response.json()) as Record<string, unknown>;
+  const raw = await response.text();
+  let payload: Record<string, unknown>;
+  try {
+    payload = raw ? (JSON.parse(raw) as Record<string, unknown>) : {};
+  } catch {
+    throw new Error("The room service crashed before it could answer. Redeploy the latest version, then try again.");
+  }
   if (!response.ok) {
     const error = typeof payload.error === "string" ? payload.error : "The room service failed.";
     throw new Error(error);
