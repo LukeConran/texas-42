@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import handler from "../api/signal";
+import { roomFetch } from "../src/server/roomFunction";
 import { handleSignal, resetMemoryRooms } from "../src/server/signal";
 
 afterEach(() => {
@@ -46,7 +46,7 @@ describe("room doorbell", () => {
   });
 
   it("answers JSON when Vercel calls the function with a web request", async () => {
-    const response = await handler.fetch(
+    const response = await roomFetch(
       new Request("https://texas42.local/api/signal", {
         method: "POST",
         headers: { "Content-Type": "application/json" },

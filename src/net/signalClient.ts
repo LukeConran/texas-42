@@ -15,7 +15,7 @@ async function post(body: unknown): Promise<Record<string, unknown>> {
   try {
     payload = raw ? (JSON.parse(raw) as Record<string, unknown>) : {};
   } catch {
-    throw new Error("The room service crashed before it could answer. Redeploy the latest version, then try again.");
+    throw new Error("The room service returned a page instead of a room code.");
   }
   if (!response.ok) {
     const error = typeof payload.error === "string" ? payload.error : "The room service failed.";
