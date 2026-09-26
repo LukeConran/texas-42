@@ -34,7 +34,15 @@ Nello, sevens, plunge, and splash are not in this version.
 
 `observe(state, seat)` builds a `PlayerView` that contains that seat's hand and everything on the table, and not the other hands. `chooseAction(view)` returns a bid, a trump, or a play. `apply(state, action)` is the only way the match changes, and it rejects a renege.
 
-`src/ai/heuristic.ts` is the current opponent. It is a point-count bidder and a trick-taking policy, not a trained agent. A reinforcement-learning policy can replace `chooseAction` without touching the rules. Self-play can call the same functions: the state is plain data, the shuffle is a seeded generator, and legal bids and plays are listed on the view.
+`src/ai/heuristic.ts` is the current opponent. It is a point-count bidder and a trick-taking policy, not a trained agent. `src/ai/policy.ts` is the slot a later bot fills, and it still sees only that view. `src/ai/ladder.ts` plays seeded hands and records each team's award. The same deals are replayed with the two policies swapped, so a new bot has to win the award rather than draw lucky cards.
+
+The measuring table is the first rung. The second rung, `src/ai/search.ts`, deals the cards still out several times, tries each legal bid or play, and keeps the choice that wins more marks against the heuristic. Run `npm run search`. That plays 8 deals, sampling 16 hidden hands at each decision. `npm run search -- 24 32` raises the deal count and the sample count. Each deal is played twice with the teams swapped. The table in the browser still uses the heuristic, because the search is too slow for a click.
+
+The third rung fits weights to those search choices so a later decision is a dot product instead of another search. Run `npm run imitate`. That watches the search play 48 hands, sampling 16 hidden hands at each decision, writes the weights to `src/ai/imitate.json`, and scores the copy against the heuristic on 16 fresh deals. `npm run imitate -- 80 16` learns from more hands. The table in the browser still uses the heuristic.
+
+The fourth rung changes those weights when the change wins more marks against the heuristic. Run `npm run rl`. That spends 30000 hands trying one weight at a time, on deals the fresh sets never see, and remembers the version with the better score. It writes `src/ai/imitate.json` only when that version also beats the starting weights on a second fresh set. `npm run rl -- 100000` spends the longer budget. A second number scales the size of each try; `1` is the normal shake, and `0.05` is much smaller. The table in the browser still uses the heuristic.
+
+`npm run imitate` and `npm run rl` append each run to `stats/data/runs.jsonl`, including the mark totals, whether the file was saved, the bid bands, and the weights. They also write a few full hands to `stats/data/samples.json`. `npm run score` measures the weights already on disk and appends that look. `npm run stats` serves a page at http://127.0.0.1:4174 with the margin over time, which runs were saved, the bid bands, the weight vector, and those hands stepped trick by trick.
 
 ## Play with friends
 
