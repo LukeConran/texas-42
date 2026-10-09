@@ -2,6 +2,7 @@ import { BOT_STYLES, chooseAction } from "../ai/heuristic";
 import type { Domino, Seat } from "../engine/domino";
 import { dominoKey, dominoLabel, seatPlace, teamOf } from "../engine/domino";
 import {
+  type Action,
   type GameState,
   type MatchSettings,
   type PlayerView,
@@ -16,6 +17,7 @@ import type { NetMessage } from "../net/messages";
 import { openGuest, openHost, type GuestLink, type HostLink } from "../net/session";
 import { trumpKey, trumpName, type Trump } from "../engine/trump";
 import { boneHtml, sortHand } from "./dominoView";
+import { lessonById, sameLessonAction, wantedKey, type Lesson } from "./lessons";
 import { type Names, RULES_HTML, contractLine, needLine, seatWord, turnLine, yourPlayLine } from "./text";
 
 const PACE_MS = {
@@ -65,6 +67,8 @@ export function mount(root: HTMLElement): void {
   let pace: Pace = "normal";
   let rulesOpen = false;
   let state: GameState | null = null;
+  let lesson: { def: Lesson; beat: number } | null = null;
+  let lessonToken = 0;
   let selectedKey: string | null = null;
   let alertText = "";
   let timer = 0;
@@ -82,6 +86,7 @@ export function mount(root: HTMLElement): void {
     if (!target || !root.contains(target)) return;
     const act = target.dataset.act;
     if (act === "start") startMatch();
+    else if (act === "lesson") startLesson(target.dataset.lesson ?? "");
     else if (act === "host") void startHost();
     else if (act === "join") void startJoin();
     else if (act === "deal-online") startOnlineMatch();
@@ -117,6 +122,7 @@ export function mount(root: HTMLElement): void {
     names = [null, null, null, null];
     humans = new Set();
     showHands = false;
+    endLesson();
     const settings: MatchSettings = {
       ...defaultSettings(),
       scoringMode,
@@ -134,12 +140,14 @@ export function mount(root: HTMLElement): void {
 
   function onBid(amount: number | "pass"): void {
     if (!state || state.phase !== "bidding" || state.turn !== me) return;
+    if (finishLessonStep({ type: "bid", amount })) return;
     blip(amount === "pass" ? 320 : 540, 0.04);
     commit({ type: "bid", amount });
   }
 
   function onTrump(key: string): void {
     if (!state || state.phase !== "trump" || state.turn !== me) return;
+    if (finishLessonStep({ type: "declareTrump", trump: parseButton(key) })) return;
     blip(600, 0.04);
     commit({ type: "declareTrump", trump: parseButton(key) });
   }
@@ -147,6 +155,13 @@ export function mount(root: HTMLElement): void {
   function onSelect(key: string): void {
     if (!state || state.phase !== "playing" || state.turn !== me) return;
     const legal = new Set(observe(state, me).legalPlays.map(dominoKey));
+    if (lesson) {
+      if (!legal.has(key)) return;
+      const domino = state.hands[me].find((d) => dominoKey(d) === key);
+      if (!domino) return;
+      finishLessonStep({ type: "play", domino });
+      return;
+    }
     if (!legal.has(key)) return;
     if (selectedKey === key) {
       playSelected();
@@ -193,6 +208,7 @@ export function mount(root: HTMLElement): void {
 
   function queue(): void {
     window.clearTimeout(timer);
+    if (lesson) return;
     if (!state || screen !== "table" || role === "guest") return;
     const delays = PACE_MS[pace];
     if (state.phase === "trickComplete") {
@@ -244,6 +260,85 @@ export function mount(root: HTMLElement): void {
     selectedKey = null;
     alertText = "";
     rulesOpen = false;
+    endLesson();
+  }
+
+  function endLesson(): void {
+    lesson = null;
+    lessonToken += 1;
+  }
+
+  function startLesson(id: string): void {
+    const def = lessonById(id);
+    if (!def) return;
+    stopNet();
+    endLesson();
+    role = "local";
+    me = 0;
+    names = [null, null, null, null];
+    humans = new Set();
+    showHands = false;
+    lesson = { def, beat: 0 };
+    state = createMatch({
+      ...defaultSettings(def.seed),
+      scoringMode: "marks",
+      target: 7,
+      openingLeadMustBeTrump: false,
+    });
+    selectedKey = null;
+    alertText = "";
+    screen = "table";
+    rulesOpen = false;
+    pumpLesson();
+  }
+
+  function finishLessonStep(action: Action): boolean {
+    if (!lesson || !state) return false;
+    const beat = lesson.def.beats[lesson.beat];
+    if (!beat || beat.kind !== "you" || !sameLessonAction(beat.action, action)) {
+      alertText = beat && beat.kind === "you" ? beat.hint : "Watch the table.";
+      return true;
+    }
+    const before = state;
+    alertText = "";
+    blip(action.type === "play" ? 420 : 540, 0.04);
+    commit(action);
+    if (state === before) return true;
+    lesson.beat += 1;
+    pumpLesson();
+    return true;
+  }
+
+  function pumpLesson(): void {
+    const token = (lessonToken += 1);
+    const step = (): void => {
+      if (token !== lessonToken || !lesson || !state) return;
+      const beat = lesson.def.beats[lesson.beat];
+      if (!beat || beat.kind === "you") {
+        render();
+        return;
+      }
+      const paced = beat.action.type === "play" || beat.action.type === "acknowledgeTrick";
+      const run = (): void => {
+        if (token !== lessonToken || !lesson || !state) return;
+        try {
+          state = apply(state, beat.action);
+        } catch (error) {
+          alertText = error instanceof Error ? error.message : "The lesson could not continue.";
+          render();
+          return;
+        }
+        lesson.beat += 1;
+        step();
+      };
+      if (!paced) {
+        run();
+        return;
+      }
+      timer = window.setTimeout(run, 360);
+      render();
+    };
+    step();
   }
 
   function broadcast(): void {
@@ -463,6 +558,14 @@ export function mount(root: HTMLElement): void {
               <button type="button" class="ghost" data-act="rules">${rulesOpen ? "Hide the rules" : "How to play"}</button>
             </div>
             <fieldset>
+              <legend>Practice</legend>
+              <p class="fine">A marked hand on this same table. The bright tiles are legal. The lesson waits until you play the one it asks for.</p>
+              <div class="menu-actions">
+                <button type="button" class="ghost" data-act="lesson" data-lesson="follow">Follow suit</button>
+                <button type="button" class="ghost" data-act="lesson" data-lesson="count">Count the points</button>
+              </div>
+            </fieldset>
+            <fieldset>
               <legend>With friends</legend>
               <label class="field">Your name
                 <input data-field="name" maxlength="16" value="${escapeHtml(playerName)}" autocomplete="nickname" />
@@ -532,11 +635,12 @@ export function mount(root: HTMLElement): void {
     const unit = game.settings.scoringMode === "marks" ? "marks" : "points";
     const target = game.settings.target;
     const handsButton =
-      role === "local"
+      role === "local" && !lesson
         ? `<button type="button" class="tool ${showHands ? "on" : ""}" data-act="hands">${showHands ? "Hide hands" : "Show hands"}</button>`
         : "";
     return `
       <div class="room">
+        ${coachHtml()}
         <header class="topbar">
           <div class="brand-block">
             <p class="brand">Texas 42</p>
@@ -658,12 +762,14 @@ export function mount(root: HTMLElement): void {
       .map((d) => {
         const key = dominoKey(d);
         const playable = !yourTurn || legal.has(key);
+        const wanted = wantedKey(lesson?.def.beats[lesson.beat]);
         return boneHtml(d, {
           size: "lg",
           trump: game.trump,
           interactive: playable && yourTurn,
           selected: selectedKey === key && playable,
           locked: yourTurn && !legal.has(key),
+          marked: yourTurn && wanted === key,
         });
       })
       .join("");
@@ -758,7 +864,27 @@ export function mount(root: HTMLElement): void {
     return `<aside class="trump-badge" aria-live="polite" aria-label="Trump is ${label}"><p class="trump-kicker">Trump</p><strong>${escapeHtml(label)}</strong>${icon}</aside>`;
   }
 
+  function coachHtml(): string {
+    if (!lesson) return "";
+    const beat = lesson.def.beats[lesson.beat];
+    const say = beat ? (beat.kind === "you" ? beat.say : "Watch the table.") : lesson.def.done;
+    const next = beat
+      ? ""
+      : `<div class="menu-actions">
+          <button type="button" class="primary" data-act="lesson" data-lesson="follow">Follow suit</button>
+          <button type="button" class="ghost" data-act="lesson" data-lesson="count">Count the points</button>
+        </div>`;
+    return `
+      <section class="coach" aria-live="polite">
+        <p class="coach-kicker">${escapeHtml(lesson.def.title)}</p>
+        <p>${escapeHtml(say)}</p>
+        ${alertText ? `<p class="coach-hint">${escapeHtml(alertText)}</p>` : ""}
+        ${next}
+      </section>`;
+  }
+
   function overlayHtml(game: GameState): string {
+    if (lesson) return "";
     const result = game.lastResult;
     if (!result || result.passed) return "";
     if (game.phase !== "handComplete" && game.phase !== "matchComplete") return "";
