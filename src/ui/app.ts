@@ -11,6 +11,7 @@ import {
   createMatch,
   defaultSettings,
   observe,
+  scoreUnit,
 } from "../engine/game";
 import type { NetMessage } from "../net/messages";
 import { openGuest, openHost, type GuestLink, type HostLink } from "../net/session";
@@ -529,7 +530,7 @@ export function mount(root: HTMLElement): void {
     const mine = teamOf(me);
     const us = game.scores[mine];
     const them = game.scores[mine === 0 ? 1 : 0];
-    const unit = game.settings.scoringMode === "marks" ? "marks" : "points";
+    const matchUnit = scoreUnit(game.settings.scoringMode, game.settings.target);
     const target = game.settings.target;
     const handsButton =
       role === "local"
@@ -540,7 +541,7 @@ export function mount(root: HTMLElement): void {
         <header class="topbar">
           <div class="brand-block">
             <p class="brand">Texas 42</p>
-            <p class="brand-sub">Hand ${game.handNumber} · first to ${target} ${unit}</p>
+            <p class="brand-sub">Hand ${game.handNumber} · first to ${target} ${matchUnit}</p>
           </div>
           <div class="scoreline" aria-label="Match score">
             <span class="us"><small>You &amp; Partner</small><strong>${us}</strong></span>
@@ -768,7 +769,8 @@ export function mount(root: HTMLElement): void {
     const mine = teamOf(me);
     const usAward = result.awarded[mine];
     const themAward = result.awarded[mine === 0 ? 1 : 0];
-    const unit = game.settings.scoringMode === "marks" ? "marks" : "points";
+    const ourUnit = scoreUnit(game.settings.scoringMode, usAward);
+    const theirUnit = scoreUnit(game.settings.scoringMode, themAward);
     const winner =
       result.matchWinner == null
         ? ""
@@ -785,7 +787,7 @@ export function mount(root: HTMLElement): void {
           <p class="result-kicker">${escapeHtml(bidder)} · ${escapeHtml(String(result.bid))} · ${escapeHtml(trump)}</p>
           <h2>${made}</h2>
           <p>Captured this hand: your team ${result.captured[mine]}, opponents ${result.captured[mine === 0 ? 1 : 0]}.</p>
-          <p>Awarded: your team ${usAward} ${unit}, opponents ${themAward} ${unit}.</p>
+          <p>Awarded: your team ${usAward} ${ourUnit}, opponents ${themAward} ${theirUnit}.</p>
           <p class="result-score">Us ${game.scores[mine]} · Them ${game.scores[mine === 0 ? 1 : 0]}</p>
           ${winner ? `<p class="winner">${winner}</p>` : ""}
           ${next}
