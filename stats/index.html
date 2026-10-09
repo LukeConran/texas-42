@@ -1,0 +1,409 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Texas 42 training</title>
+<style>
+  :root {
+    --room: #1b130e;
+    --felt: #145c45;
+    --felt-deep: #0c3b2c;
+    --ivory: #f7f1e6;
+    --ink: #1c1814;
+    --muted: #d9ccb6;
+    --gold: #e6c27a;
+    --clay: #e08a62;
+    --good: #c6e2a8;
+    --line: #8a5a32;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--room);
+    color: var(--ivory);
+    font: 16px/1.45 "Iowan Old Style", Palatino, Georgia, serif;
+  }
+  main { max-width: 1100px; margin: 0 auto; padding: 28px 20px 64px; }
+  h1 { font-size: 32px; font-weight: 600; margin: 0 0 6px; }
+  h2 { font-size: 20px; font-weight: 600; margin: 0 0 12px; }
+  p.lead { color: var(--muted); margin: 0 0 22px; max-width: 62ch; }
+  section {
+    background: #241811;
+    border: 1px solid #3a2a20;
+    border-radius: 16px;
+    padding: 16px 16px 18px;
+    margin: 0 0 16px;
+  }
+  .split { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .split section { margin: 0; }
+  svg.curve { width: 100%; height: 260px; display: block; }
+  .legend { display: flex; gap: 16px; color: var(--muted); font-size: 14px; margin-top: 8px; }
+  .legend i { display: inline-block; width: 18px; height: 3px; margin-right: 6px; vertical-align: middle; }
+  .strip { display: flex; flex-wrap: wrap; gap: 6px; }
+  .strip button, .hands button, .tabs button, .steps button {
+    font: inherit;
+    color: var(--ink);
+    background: var(--ivory);
+    border: 0;
+    border-radius: 8px;
+    padding: 8px 10px;
+    cursor: pointer;
+  }
+  .strip button.saved { background: var(--good); }
+  .strip button.dropped { background: var(--clay); }
+  .strip button.on, .hands button.on, .tabs button.on, .steps button.on {
+    outline: 2px solid var(--gold);
+  }
+  table { width: 100%; border-collapse: collapse; font-size: 15px; }
+  th, td { text-align: left; padding: 5px 6px; border-bottom: 1px solid #3a2a20; }
+  th { color: var(--muted); font-weight: 500; }
+  .tabs, .steps, .hands { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
+  .bars { display: flex; flex-direction: column; gap: 4px; max-height: 520px; overflow: auto; }
+  .bar-row { display: grid; grid-template-columns: 140px 1fr 64px; gap: 8px; align-items: center; font-size: 13px; }
+  .track { position: relative; height: 14px; background: #120d0a; border-radius: 7px; }
+  .fill { position: absolute; top: 0; height: 14px; border-radius: 7px; }
+  .fill.pos { background: var(--gold); }
+  .fill.neg { background: var(--clay); }
+  .mark { position: absolute; top: -2px; width: 2px; height: 18px; background: var(--ivory); }
+  .replay-head { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; }
+  .bids { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0 12px; }
+  .bid {
+    background: var(--felt-deep);
+    border-radius: 10px;
+    padding: 8px 10px;
+    min-width: 120px;
+  }
+  .bid strong { display: block; font-size: 18px; }
+  .trick {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    align-items: end;
+    background: var(--felt);
+    border-radius: 14px;
+    padding: 14px;
+    min-height: 120px;
+  }
+  .play { text-align: center; font-size: 13px; }
+  .play.win .who { color: var(--gold); }
+  .bone {
+    width: 46px;
+    height: 86px;
+    background: linear-gradient(#fffaf3, var(--ivory) 40%, #e6dccb);
+    border-radius: 6px;
+    display: flex;
+    flex-direction: column;
+    padding: 3px;
+    margin: 0 auto 4px;
+    box-shadow: 0 6px 10px rgba(0,0,0,.35);
+  }
+  .half {
+    flex: 1;
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    grid-template-rows: repeat(3, 1fr);
+    padding: 2px;
+  }
+  .half + .half { border-top: 1px solid #c8bba6; }
+  .half i { width: 8px; height: 8px; border-radius: 50%; justify-self: center; align-self: center; }
+  .empty { color: var(--muted); }
+  @media (max-width: 800px) {
+    .split { grid-template-columns: 1fr; }
+    .bar-row { grid-template-columns: 108px 1fr 52px; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <h1>Training</h1>
+  <p class="lead" id="lead">Each imitate or rl run appends a line. This page reads that log.</p>
+  <section>
+    <h2>Mark margin</h2>
+    <div id="curve"></div>
+  </section>
+  <section>
+    <h2>Saved runs</h2>
+    <div id="strip" class="strip"></div>
+  </section>
+  <div class="split">
+    <section>
+      <h2>Bid bands</h2>
+      <div id="bands"></div>
+    </section>
+    <section>
+      <h2>Weights</h2>
+      <div id="weight-tabs" class="tabs"></div>
+      <div id="weights"></div>
+    </section>
+  </div>
+  <section>
+    <h2>A hand</h2>
+    <div id="replay"></div>
+  </section>
+</main>
+<script>
+const PIPS = {
+  0: [],
+  1: [[1, 1]],
+  2: [[0, 0], [2, 2]],
+  3: [[0, 2], [1, 1], [2, 0]],
+  4: [[0, 0], [0, 2], [2, 0], [2, 2]],
+  5: [[0, 0], [0, 2], [1, 1], [2, 0], [2, 2]],
+  6: [[0, 0], [1, 0], [2, 0], [0, 2], [1, 2], [2, 2]],
+};
+const PIP_COLOR = { 1: "#6ec4e8", 2: "#1f8a3e", 3: "#c62828", 4: "#7a4e28", 5: "#2a5fd4", 6: "#e6b325" };
+const BANDS = ["pass", "30-35", "36-41", "42", "84", "126", "168"];
+
+let runs = [];
+let samples = { at: "", hands: [] };
+let facts = { bid: [], trump: [], play: [] };
+let selected = 0;
+let head = "bid";
+let handIndex = 0;
+let step = -1;
+
+const curve = document.querySelector("#curve");
+const strip = document.querySelector("#strip");
+const bands = document.querySelector("#bands");
+const weightTabs = document.querySelector("#weight-tabs");
+const weights = document.querySelector("#weights");
+const replay = document.querySelector("#replay");
+const lead = document.querySelector("#lead");
+
+function margin(result) {
+  if (!result) return null;
+  return result.awardA - result.awardB;
+}
+
+function bone(hi, lo) {
+  return `<div class="bone">${half(hi)}${half(lo)}</div>`;
+}
+
+function half(n) {
+  const dots = (PIPS[n] ?? []).map(([col, row]) => {
+    const color = PIP_COLOR[n] ?? "#1c1814";
+    return `<i style="grid-column:${col + 1};grid-row:${row + 1};background:${color}"></i>`;
+  }).join("");
+  return `<span class="half">${dots}</span>`;
+}
+
+function draw() {
+  if (runs.length === 0) {
+    lead.textContent = "No runs yet. npm run score, npm run imitate, or npm run rl will append one. Then refresh this page.";
+    curve.innerHTML = `<p class="empty">The chart appears after the first run.</p>`;
+    strip.innerHTML = "";
+    bands.innerHTML = "";
+    weights.innerHTML = "";
+    replay.innerHTML = `<p class="empty">Sample hands are written with each run.</p>`;
+    return;
+  }
+  selected = Math.min(selected, runs.length - 1);
+  const run = runs[selected];
+  lead.textContent = `${runs.length} run${runs.length === 1 ? "" : "s"} in stats/data/runs.jsonl. Select one to read its bands and weights.`;
+  drawCurve();
+  drawStrip();
+  drawBands(run);
+  drawWeightTabs();
+  drawWeights(run);
+  drawReplay(run);
+}
+
+function drawCurve() {
+  const width = 1040;
+  const height = 260;
+  const pad = { l: 42, r: 16, t: 16, b: 28 };
+  const values = runs.flatMap((run) => [margin(run.versusHeuristic), margin(run.versusStart)].filter((value) => value != null));
+  let lo = Math.min(0, ...values);
+  let hi = Math.max(0, ...values);
+  if (lo === hi) { lo -= 1; hi += 1; }
+  const innerW = width - pad.l - pad.r;
+  const innerH = height - pad.t - pad.b;
+  const x = (index) => pad.l + (runs.length === 1 ? innerW / 2 : (index / (runs.length - 1)) * innerW);
+  const y = (value) => pad.t + ((hi - value) / (hi - lo)) * innerH;
+  const path = (pick) => {
+    let moved = false;
+    return runs.map((run, index) => {
+      const value = pick(run);
+      if (value == null) return null;
+      const command = moved ? "L" : "M";
+      moved = true;
+      return `${command}${x(index).toFixed(1)},${y(value).toFixed(1)}`;
+    }).filter(Boolean).join(" ");
+  };
+  const dots = (pick, color) => runs.map((run, index) => {
+    const value = pick(run);
+    if (value == null) return "";
+    return `<circle cx="${x(index).toFixed(1)}" cy="${y(value).toFixed(1)}" r="${index === selected ? 6 : 4}" fill="${color}" data-run="${index}"></circle>`;
+  }).join("");
+  const zero = y(0);
+  curve.innerHTML = `
+    <svg class="curve" viewBox="0 0 ${width} ${height}" role="img" aria-label="Mark margin by run">
+      <line x1="${pad.l}" y1="${zero}" x2="${width - pad.r}" y2="${zero}" stroke="#3a2a20" />
+      <text x="4" y="${pad.t + 8}" fill="#d9ccb6" font-size="12">${hi}</text>
+      <text x="4" y="${height - 8}" fill="#d9ccb6" font-size="12">${lo}</text>
+      <path d="${path((run) => margin(run.versusStart))}" fill="none" stroke="#d9ccb6" stroke-width="2" />
+      <path d="${path((run) => margin(run.versusHeuristic))}" fill="none" stroke="#e6c27a" stroke-width="2.5" />
+      ${dots((run) => margin(run.versusStart), "#d9ccb6")}
+      ${dots((run) => margin(run.versusHeuristic), "#e6c27a")}
+    </svg>
+    <div class="legend"><span><i style="background:#e6c27a"></i>This run vs heuristic</span><span><i style="background:#d9ccb6"></i>Starting weights vs heuristic</span></div>`;
+  curve.querySelectorAll("circle").forEach((dot) => {
+    dot.addEventListener("click", () => {
+      selected = Number(dot.dataset.run);
+      handIndex = 0;
+      step = -1;
+      draw();
+    });
+  });
+}
+
+function drawStrip() {
+  strip.innerHTML = "";
+  runs.forEach((run, index) => {
+    const button = document.createElement("button");
+    button.className = `${run.accepted ? "saved" : "dropped"}${index === selected ? " on" : ""}`;
+    const ahead = margin(run.versusHeuristic);
+    button.textContent = `${label(run)} ${ahead > 0 ? "+" : ""}${ahead}`;
+    button.title = `${run.at} ${run.accepted ? "saved" : "not saved"}`;
+    button.addEventListener("click", () => {
+      selected = index;
+      handIndex = 0;
+      step = -1;
+      draw();
+    });
+    strip.appendChild(button);
+  });
+}
+
+function label(run) {
+  if (run.kind === "imitate") return "Imitate";
+  if (run.kind === "score") return "File";
+  return "RL";
+}
+
+function drawBands(run) {
+  const rows = BANDS.map((band) => {
+    const current = run.bands?.bands?.[band] ?? { hands: 0, made: 0 };
+    const prior = run.bandsStart?.bands?.[band];
+    const rate = current.hands ? `${Math.round((100 * current.made) / current.hands)}%` : "—";
+    const priorRate = prior && prior.hands ? `${Math.round((100 * prior.made) / prior.hands)}%` : "—";
+    return `<tr><td>${band}</td><td>${current.hands}</td><td>${current.made}</td><td>${rate}</td><td>${priorRate}</td></tr>`;
+  }).join("");
+  bands.innerHTML = `<table><thead><tr><th>Band</th><th>Hands</th><th>Made</th><th>This run</th><th>Start</th></tr></thead><tbody>${rows}</tbody></table>`;
+}
+
+function drawWeightTabs() {
+  weightTabs.innerHTML = "";
+  for (const key of ["bid", "trump", "play"]) {
+    const button = document.createElement("button");
+    button.textContent = key === "bid" ? "Bids" : key === "trump" ? "Trump" : "Plays";
+    button.className = key === head ? "on" : "";
+    button.addEventListener("click", () => { head = key; draw(); });
+    weightTabs.appendChild(button);
+  }
+}
+
+function drawWeights(run) {
+  const names = facts[head] ?? [];
+  const values = run.weights?.[head]?.w ?? [];
+  const previous = previousWeights(run);
+  const extent = Math.max(1, ...values.map((value) => Math.abs(value)), ...(previous ?? []).map((value) => Math.abs(value)));
+  weights.innerHTML = `<div class="bars">${values.map((value, index) => {
+    const width = (Math.abs(value) / extent) * 50;
+    const left = value >= 0 ? 50 : 50 - width;
+    const prior = previous ? previous[index] : null;
+    const priorMark = prior == null ? "" : `<i class="mark" style="left:${50 + (prior / extent) * 50}%"></i>`;
+    return `<div class="bar-row"><span>${names[index] ?? index}</span><div class="track"><div class="fill ${value >= 0 ? "pos" : "neg"}" style="left:${left}%;width:${width}%"></div>${priorMark}</div><span>${value.toFixed(2)}</span></div>`;
+  }).join("")}</div>`;
+}
+
+function previousWeights(run) {
+  const index = runs.indexOf(run);
+  for (let i = index - 1; i >= 0; i--) {
+    const prior = runs[i]?.weights?.[head]?.w;
+    if (prior) return prior;
+  }
+  return null;
+}
+
+function drawReplay(run) {
+  if (samples.at !== run.at || samples.hands.length === 0) {
+    replay.innerHTML = `<p class="empty">Trick lists are kept for the latest run only. This run is ${run.at}.</p>`;
+    return;
+  }
+  handIndex = Math.min(handIndex, samples.hands.length - 1);
+  const hand = samples.hands[handIndex];
+  if (hand.passed || step >= hand.tricks.length) step = -1;
+  const steps = ["Bids", ...hand.tricks.map((_, index) => `Trick ${index + 1}`)];
+  const shown = step;
+  replay.innerHTML = "";
+  const list = document.createElement("div");
+  list.className = "hands";
+  samples.hands.forEach((item, index) => {
+    const button = document.createElement("button");
+    button.className = index === handIndex ? "on" : "";
+    const outcome = item.passed ? "pass" : item.made ? `made ${item.bid}` : `set ${item.bid}`;
+    button.textContent = `Deal ${item.seed} · ${outcome}`;
+    button.addEventListener("click", () => { handIndex = index; step = -1; drawReplay(run); });
+    list.appendChild(button);
+  });
+  replay.appendChild(list);
+  const headLine = document.createElement("div");
+  headLine.className = "replay-head";
+  const outcome = hand.passed ? "Everyone passed." : `${hand.bidderName ?? "Bidder"} ${hand.made ? "made" : "was set on"} ${hand.bid}. Trump: ${hand.trump}. Marks ${hand.awarded[0]}–${hand.awarded[1]}.`;
+  headLine.innerHTML = `<p>${outcome}</p>`;
+  replay.appendChild(headLine);
+  const stepRow = document.createElement("div");
+  stepRow.className = "steps";
+  steps.forEach((name, index) => {
+    const button = document.createElement("button");
+    button.className = index === shown + 1 ? "on" : "";
+    button.textContent = name;
+    button.addEventListener("click", () => { step = index === 0 ? -1 : index - 1; drawReplay(run); });
+    stepRow.appendChild(button);
+  });
+  replay.appendChild(stepRow);
+  if (shown < 0) {
+    const row = document.createElement("div");
+    row.className = "bids";
+    row.innerHTML = hand.bids.map((bid) => `<div class="bid"><span>${bid.name}</span><strong>${bid.amount}</strong></div>`).join("");
+    replay.appendChild(row);
+    return;
+  }
+  const trick = hand.tricks[shown];
+  const board = document.createElement("div");
+  board.className = "trick";
+  board.innerHTML = trick.plays.map((play) => `
+    <div class="play${play.seat === trick.winner ? " win" : ""}">
+      ${bone(play.hi, play.lo)}
+      <div class="who">${play.name}</div>
+    </div>`).join("") + `<div class="play"><div class="who">${trick.winnerName} takes ${trick.points}</div></div>`;
+  replay.appendChild(board);
+}
+
+async function load() {
+  try {
+    const log = await fetch("./data/runs.jsonl", { cache: "no-store" });
+    if (!log.ok) throw new Error("missing log");
+    const text = await log.text();
+    runs = text.split("\n").map((line) => line.trim()).filter(Boolean).map((line) => JSON.parse(line));
+  } catch {
+    runs = [];
+  }
+  try {
+    const sampleLog = await fetch("./data/samples.json", { cache: "no-store" });
+    if (sampleLog.ok) samples = await sampleLog.json();
+  } catch { /* replay stays empty */ }
+  try {
+    const factLog = await fetch("./data/facts.json", { cache: "no-store" });
+    if (factLog.ok) facts = await factLog.json();
+  } catch { /* bars fall back to indexes */ }
+  selected = Math.max(0, runs.length - 1);
+  draw();
+}
+
+load();
+</script>
+</body>
+</html>
