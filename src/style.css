@@ -473,6 +473,15 @@ legend { margin-bottom: 8px; color: var(--gold); }
   font: inherit;
 }
 .field input[data-field="code"] { text-transform: uppercase; letter-spacing: 0.12em; }
+.field select {
+  background: rgba(0, 0, 0, 0.25);
+  color: var(--cream);
+  border: 1px solid rgba(244, 236, 223, 0.35);
+  border-radius: 12px;
+  padding: 8px 12px;
+  font: inherit;
+}
+.seat-picker { display: grid; gap: 2px; margin-top: 8px; }
 .room-code {
   margin: 8px 0;
   font-family: "Fraunces", Georgia, serif;

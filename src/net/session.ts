@@ -1,7 +1,7 @@
 import type { Seat } from "../engine/domino";
-import { nextSeat } from "../engine/domino";
 import type { Names, NetMessage } from "./messages";
 import { decode, encode } from "./messages";
+import { claimSeat, emptyPlan, releaseSeat, swapSeats, type SeatPlan } from "./seats";
 import { closeRoom, createRoom, enterRoom, guestBox, hostBox, leaveRoom, postMail } from "./signalClient";
 
 /** Matches the server. A background tab can pause timers for about a minute. */
@@ -10,6 +10,8 @@ const STALE_MS = 180_000;
 export interface HostLink {
   code: string;
   send(seat: Seat, message: NetMessage): void;
+  /** Swap two chairs before the deal. One of them may be the host, and one may be a bot. */
+  swap(a: Seat, b: Seat): void;
   close(): void;
 }
 
@@ -27,20 +29,22 @@ export async function openHost(
   onClose: (seat: Seat) => void,
 ): Promise<HostLink> {
   const { code, hostId } = await createRoom();
-  const taken = new Set<Seat>([0]);
+  let plan: SeatPlan = emptyPlan();
   const seatOf = new Map<string, Seat>();
   const guestOf = new Map<Seat, string>();
   const seen = new Map<string, number>();
   const gone = new Set<string>();
   let stopped = false;
 
-  const assign = (): Seat | null => {
-    let seat: Seat = 1;
-    for (let i = 0; i < 3; i++) {
-      if (!taken.has(seat)) return seat;
-      seat = nextSeat(seat);
-    }
-    return null;
+  const syncMaps = (): void => {
+    seatOf.clear();
+    guestOf.clear();
+    ([0, 1, 2, 3] as Seat[]).forEach((seat) => {
+      const id = plan.guests[seat];
+      if (!id) return;
+      seatOf.set(id, seat);
+      guestOf.set(seat, id);
+    });
   };
 
   const poll = async () => {
@@ -52,24 +56,20 @@ export async function openHost(
           if (box.now - guest.lastSeen <= STALE_MS) continue;
           const seat = seatOf.get(guest.id);
           gone.add(guest.id);
-          if (seat != null) {
-            taken.delete(seat);
-            seatOf.delete(guest.id);
-            guestOf.delete(seat);
-            onClose(seat);
-          }
+          plan = releaseSeat(plan, guest.id);
+          syncMaps();
+          if (seat != null) onClose(seat);
           void leaveRoom(code, guest.id).catch(() => undefined);
         }
         const arrivals = box.guests
           .filter((guest) => !gone.has(guest.id) && !seatOf.has(guest.id))
           .sort((a, b) => a.enteredAt - b.enteredAt || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
         for (const guest of arrivals) {
-          const seat = assign();
-          if (seat == null) continue;
-          taken.add(seat);
-          seatOf.set(guest.id, seat);
-          guestOf.set(seat, guest.id);
-          onMessage(seat, { type: "hello", name: guest.name });
+          const claimed = claimSeat(plan, guest.id);
+          if (!claimed) continue;
+          plan = claimed.plan;
+          syncMaps();
+          onMessage(claimed.seat, { type: "hello", name: guest.name });
         }
         for (const item of box.mail) {
           seen.set(item.guestId, item.n + 1);
@@ -92,6 +92,10 @@ export async function openHost(
       const guestId = guestOf.get(seat);
       if (!guestId) return;
       void deliver(code, guestId, "toGuest", encode(message), hostId);
+    },
+    swap(a, b) {
+      plan = swapSeats(plan, a, b);
+      syncMaps();
     },
     close() {
       stopped = true;
