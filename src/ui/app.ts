@@ -13,7 +13,7 @@ import {
   observe,
   scoreUnit,
 } from "../engine/game";
-import type { NetMessage } from "../net/messages";
+import { chatSpeaker, chatText, type NetMessage } from "../net/messages";
 import { openGuest, openHost, type GuestLink, type HostLink } from "../net/session";
 import { trumpKey, trumpName, type Trump } from "../engine/trump";
 import { boneHtml, sortHand } from "./dominoView";
@@ -70,18 +70,30 @@ export function mount(root: HTMLElement): void {
   let alertText = "";
   let timer = 0;
   let audio: AudioContext | null = null;
+  let chat: Array<{ from: string; text: string; mine: boolean }> = [];
+  let chatDraft = "";
 
   root.addEventListener("input", (event) => {
     const target = event.target as HTMLInputElement | null;
     if (!target) return;
     if (target.dataset.field === "name") playerName = target.value;
     if (target.dataset.field === "code") joinCode = target.value.toUpperCase();
+    if (target.dataset.field === "chat") chatDraft = target.value;
+  });
+
+  root.addEventListener("submit", (event) => {
+    const form = event.target;
+    if (!(form instanceof HTMLFormElement) || form.dataset.act !== "chat-form") return;
+    event.preventDefault();
+    const field = form.querySelector<HTMLInputElement>('[data-field="chat"]');
+    sendChat(field?.value ?? "");
   });
 
   root.addEventListener("click", (event) => {
     const target = (event.target as HTMLElement | null)?.closest<HTMLElement>("[data-act]");
     if (!target || !root.contains(target)) return;
     const act = target.dataset.act;
+    if (act === "chat-form") return;
     if (act === "start") startMatch();
     else if (act === "host") void startHost();
     else if (act === "join") void startJoin();
@@ -245,6 +257,8 @@ export function mount(root: HTMLElement): void {
     selectedKey = null;
     alertText = "";
     rulesOpen = false;
+    chat = [];
+    chatDraft = "";
   }
 
   function broadcast(): void {
@@ -276,6 +290,8 @@ export function mount(root: HTMLElement): void {
     try {
       names = [cleanName(playerName) || null, null, null, null];
       humans = new Set<Seat>([0]);
+      chat = [];
+      chatDraft = "";
       hostLink = await openHost(onGuestMessage, onGuestClose);
       role = "host";
       roomCode = hostLink.code;
@@ -295,6 +311,14 @@ export function mount(root: HTMLElement): void {
 
   function onGuestMessage(seat: Seat, message: NetMessage): void {
     if (role !== "host" || !hostLink) return;
+    if (message.type === "chat") {
+      const text = chatText(message.text);
+      if (!text) return;
+      const from = names[seat] || seatWord(seat, me, names);
+      relayChat(from, text, seat);
+      rememberChat(from, text, false);
+      return;
+    }
     if (message.type === "hello") {
       const next = [...names] as Names;
       next[seat] = cleanName(message.name) || null;
@@ -344,6 +368,8 @@ export function mount(root: HTMLElement): void {
     try {
       role = "guest";
       me = 0;
+      chat = [];
+      chatDraft = "";
       guestLink = await openGuest(code, cleanName(playerName), onHostMessage, onHostClosed);
       roomCode = code;
       if (!state) {
@@ -362,7 +388,14 @@ export function mount(root: HTMLElement): void {
   }
 
   function onHostMessage(message: NetMessage): void {
-    if (role !== "guest" || message.type !== "sync") return;
+    if (role !== "guest") return;
+    if (message.type === "chat") {
+      const text = chatText(message.text);
+      if (!text) return;
+      rememberChat(chatSpeaker(message.from) || "Table", text, false);
+      return;
+    }
+    if (message.type !== "sync") return;
     me = message.view.seat;
     names = [message.names[0] ?? null, message.names[1] ?? null, message.names[2] ?? null, message.names[3] ?? null];
     state = stateFromView(message.view);
@@ -380,7 +413,38 @@ export function mount(root: HTMLElement): void {
     state = null;
     screen = "menu";
     showHands = false;
+    chat = [];
+    chatDraft = "";
     menuNote = "The host closed the room.";
+    render();
+  }
+
+  function sendChat(raw: string): void {
+    const text = chatText(raw);
+    if (!text) return;
+    if (role === "guest") {
+      if (!guestLink) return;
+      guestLink.send({ type: "chat", text });
+    } else if (role === "host") {
+      if (!hostLink) return;
+      relayChat(names[me] || "Host", text, null);
+    } else {
+      return;
+    }
+    chatDraft = "";
+    rememberChat("You", text, true);
+  }
+
+  function relayChat(from: string, text: string, except: Seat | null): void {
+    if (!hostLink) return;
+    for (const seat of [1, 2, 3] as Seat[]) {
+      if (seat === except || !humans.has(seat)) continue;
+      hostLink.send(seat, { type: "chat", text, from });
+    }
+  }
+
+  function rememberChat(from: string, text: string, mine: boolean): void {
+    chat = [...chat, { from, text, mine }].slice(-40);
     render();
   }
 
@@ -431,9 +495,20 @@ export function mount(root: HTMLElement): void {
   }
 
   function render(): void {
+    const active = document.activeElement;
+    const chatFocused = active instanceof HTMLInputElement && active.dataset.field === "chat";
+    const caret = chatFocused ? active.selectionStart : null;
     if (screen === "table" && state) root.innerHTML = tableHtml(state);
     else if (screen === "lobby") root.innerHTML = lobbyHtml();
     else root.innerHTML = menuHtml();
+    const log = root.querySelector<HTMLElement>(".chat-log");
+    if (log) log.scrollTop = log.scrollHeight;
+    if (!chatFocused) return;
+    const field = root.querySelector<HTMLInputElement>('[data-field="chat"]');
+    if (!field) return;
+    field.focus();
+    const pos = caret ?? field.value.length;
+    field.setSelectionRange(pos, pos);
   }
 
   function menuHtml(): string {
@@ -518,6 +593,7 @@ export function mount(root: HTMLElement): void {
           <section class="menu-card">
             <h1>${role === "host" ? "Your table is open." : "You are in the room."}</h1>
             ${hostControls}
+            ${chatHtml()}
             <div class="menu-actions">
               <button type="button" class="ghost" data-act="menu">Leave</button>
             </div>
@@ -587,6 +663,7 @@ export function mount(root: HTMLElement): void {
           </section>
           <aside class="side">
             ${trickBoardHtml(game)}
+            ${chatHtml()}
           </aside>
         </div>
         ${trumpBadgeHtml(game)}
@@ -795,6 +872,27 @@ export function mount(root: HTMLElement): void {
       </div>`;
   }
 
+
+  function chatHtml(): string {
+    if (role !== "host" && role !== "guest") return "";
+    const lines = chat
+      .map(
+        (line) =>
+          `<p class="chat-line ${line.mine ? "mine" : ""}"><strong>${escapeHtml(line.from)}</strong> ${escapeHtml(line.text)}</p>`,
+      )
+      .join("");
+    return `
+      <section class="chat" aria-label="Table talk">
+        <h2>Table talk</h2>
+        <div class="chat-log">
+          ${lines || `<p class="chat-empty">Messages stay in this room, and they are not bids or plays.</p>`}
+        </div>
+        <form class="chat-form" data-act="chat-form">
+          <input data-field="chat" maxlength="200" placeholder="Message the table" value="${escapeHtml(chatDraft)}" autocomplete="off" />
+          <button type="submit" class="primary">Send</button>
+        </form>
+      </section>`;
+  }
 
   function blip(freq: number, gain: number): void {
     if (!soundOn) return;
