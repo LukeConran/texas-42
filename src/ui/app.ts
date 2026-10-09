@@ -295,7 +295,8 @@ export function mount(root: HTMLElement): void {
   function finishLessonStep(action: Action): boolean {
     if (!lesson || !state) return false;
     const beat = lesson.def.beats[lesson.beat];
-    if (!beat || beat.kind !== "you" || !sameLessonAction(beat.action, action)) {
+    if (!beat) return true;
+    if (beat.kind !== "you" || !sameLessonAction(beat.action, action)) {
       alertText = beat && beat.kind === "you" ? beat.hint : "Watch the table.";
       return true;
     }
@@ -667,7 +668,7 @@ export function mount(root: HTMLElement): void {
                 <div class="middle">
                   ${seatBlock(game, seatAt("w"), "west")}
                   <div class="trick-wrap">
-                    <p class="status" aria-live="polite">${escapeHtml(turnLine(game, me, names))}</p>
+                    <p class="status" aria-live="polite">${escapeHtml(lessonOver() ? "Lesson complete." : turnLine(game, me, names))}</p>
                     <div class="trick">${trickSlots(game)}</div>
                     <p class="contract">${escapeHtml(handBanner(game, me, names))}</p>
                     <p class="count-out">${escapeHtml(countOutLine(game))}</p>
@@ -757,7 +758,7 @@ export function mount(root: HTMLElement): void {
 
   function yourHandHtml(game: GameState): string {
     const legal = legalKeys(game);
-    const yourTurn = game.phase === "playing" && game.turn === me;
+    const yourTurn = game.phase === "playing" && game.turn === me && !lessonOver();
     return sortHand(game.hands[me], game.trump)
       .map((d) => {
         const key = dominoKey(d);
@@ -775,7 +776,12 @@ export function mount(root: HTMLElement): void {
       .join("");
   }
 
+  function lessonOver(): boolean {
+    return Boolean(lesson && lesson.beat >= lesson.def.beats.length);
+  }
+
   function dockHtml(game: GameState): string {
+    if (lessonOver()) return `<p class="dock-note">Lesson complete.</p>`;
     if (game.phase === "bidding" && game.turn === me) {
       const amounts = observe(game, me).legalBids;
       const buttons = amounts
