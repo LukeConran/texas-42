@@ -1,6 +1,6 @@
 import { BOT_STYLES, chooseAction } from "../ai/heuristic";
 import type { Domino, Seat } from "../engine/domino";
-import { dominoKey, dominoLabel, seatPlace, teamOf } from "../engine/domino";
+import { dominoKey, dominoLabel, partnerOf, seatPlace, teamOf } from "../engine/domino";
 import {
   type GameState,
   type MatchSettings,
@@ -12,7 +12,8 @@ import {
   defaultSettings,
   observe,
 } from "../engine/game";
-import type { NetMessage } from "../net/messages";
+import { isSeat, type NetMessage } from "../net/messages";
+import { guestSeats } from "../net/seats";
 import { openGuest, openHost, type GuestLink, type HostLink } from "../net/session";
 import { trumpKey, trumpName, type Trump } from "../engine/trump";
 import { boneHtml, sortHand } from "./dominoView";
@@ -64,6 +65,7 @@ export function mount(root: HTMLElement): void {
   let soundOn = false;
   let pace: Pace = "normal";
   let rulesOpen = false;
+  let placed = false;
   let state: GameState | null = null;
   let selectedKey: string | null = null;
   let alertText = "";
@@ -77,10 +79,20 @@ export function mount(root: HTMLElement): void {
     if (target.dataset.field === "code") joinCode = target.value.toUpperCase();
   });
 
+  root.addEventListener("change", (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLSelectElement) || target.dataset.act !== "seat") return;
+    const from = Number(target.dataset.from);
+    const to = Number(target.value);
+    if (!isSeat(from) || !isSeat(to)) return;
+    moveSeat(from, to);
+  });
+
   root.addEventListener("click", (event) => {
     const target = (event.target as HTMLElement | null)?.closest<HTMLElement>("[data-act]");
     if (!target || !root.contains(target)) return;
     const act = target.dataset.act;
+    if (act === "seat") return;
     if (act === "start") startMatch();
     else if (act === "host") void startHost();
     else if (act === "join") void startJoin();
@@ -244,12 +256,12 @@ export function mount(root: HTMLElement): void {
     selectedKey = null;
     alertText = "";
     rulesOpen = false;
+    placed = false;
   }
 
   function broadcast(): void {
     if (role !== "host" || !state || !hostLink) return;
-    for (const seat of [1, 2, 3] as Seat[]) {
-      if (!humans.has(seat)) continue;
+    for (const seat of guestSeats(me, humans)) {
       const view = observe(state, seat);
       hostLink.send(seat, {
         type: "sync",
@@ -300,6 +312,7 @@ export function mount(root: HTMLElement): void {
       names = next;
       humans.add(seat);
       if (state) broadcast();
+      else tellSeats();
       render();
       return;
     }
@@ -322,8 +335,42 @@ export function mount(root: HTMLElement): void {
     if (state) {
       broadcast();
       queue();
-    }
+    } else tellSeats();
     render();
+  }
+
+  function moveSeat(from: Seat, to: Seat): void {
+    if (role !== "host" || !hostLink || state || from === to) return;
+    hostLink.swap(from, to);
+    const nextNames = [...names] as Names;
+    const held = nextNames[from] ?? null;
+    nextNames[from] = nextNames[to] ?? null;
+    nextNames[to] = held;
+    names = nextNames;
+    const nextHumans = new Set(humans);
+    const fromHuman = humans.has(from);
+    const toHuman = humans.has(to);
+    if (fromHuman !== toHuman) {
+      if (fromHuman) {
+        nextHumans.delete(from);
+        nextHumans.add(to);
+      } else {
+        nextHumans.delete(to);
+        nextHumans.add(from);
+      }
+    }
+    humans = nextHumans;
+    if (me === from) me = to;
+    else if (me === to) me = from;
+    tellSeats();
+    render();
+  }
+
+  function tellSeats(): void {
+    if (role !== "host" || !hostLink || state) return;
+    for (const seat of guestSeats(me, humans)) {
+      hostLink.send(seat, { type: "seated", seat, names: [...names] });
+    }
   }
 
   async function startJoin(): Promise<void> {
@@ -343,6 +390,7 @@ export function mount(root: HTMLElement): void {
     try {
       role = "guest";
       me = 0;
+      placed = false;
       guestLink = await openGuest(code, cleanName(playerName), onHostMessage, onHostClosed);
       roomCode = code;
       if (!state) {
@@ -361,7 +409,16 @@ export function mount(root: HTMLElement): void {
   }
 
   function onHostMessage(message: NetMessage): void {
-    if (role !== "guest" || message.type !== "sync") return;
+    if (role !== "guest") return;
+    if (message.type === "seated") {
+      if (state || !isSeat(message.seat)) return;
+      me = message.seat;
+      names = [message.names[0] ?? null, message.names[1] ?? null, message.names[2] ?? null, message.names[3] ?? null];
+      placed = true;
+      render();
+      return;
+    }
+    if (message.type !== "sync") return;
     me = message.view.seat;
     names = [message.names[0] ?? null, message.names[1] ?? null, message.names[2] ?? null, message.names[3] ?? null];
     state = stateFromView(message.view);
@@ -379,6 +436,7 @@ export function mount(root: HTMLElement): void {
     state = null;
     screen = "menu";
     showHands = false;
+    placed = false;
     menuNote = "The host closed the room.";
     render();
   }
@@ -485,27 +543,18 @@ export function mount(root: HTMLElement): void {
   }
 
   function lobbyHtml(): string {
-    const seats = ([0, 1, 2, 3] as Seat[])
-      .map((seat) => {
-        const label = seat === 0 ? "South (host)" : seatWord(seat, 0, names);
-        if (seat === 0) return `${names[0] ? `${names[0]} · ` : ""}${label}`;
-        if (humans.has(seat)) return `${seatWord(seat, 0, names)} · joined`;
-        return `${label} · bot, until someone joins`;
-      })
-      .map((line) => `<li>${escapeHtml(line)}</li>`)
-      .join("");
     const hostControls =
       role === "host"
         ? `<p class="room-code">${escapeHtml(roomCode)}</p>
-           <p class="fine">Share the code or this link. The first friend sits on your left, the second sits across as your partner, and the third sits on your right. Empty seats are bots. Keep this tab open for the whole match.</p>
+           <p class="fine">Share the code or this link. Partners sit across: South with North, West with East. Put two people across from each other to partner them, or side by side to oppose them. An empty seat is a bot. Seats stay put once the first hand is dealt. Keep this tab open for the whole match.</p>
            <p class="fine">${escapeHtml(roomLink())}</p>
            <div class="menu-actions">
-             <button type="button" class="primary" data-act="deal-online">Fill empty seats and deal</button>
+             <button type="button" class="primary" data-act="deal-online">Deal the first hand</button>
              <button type="button" class="ghost" data-act="copy">Copy link</button>
            </div>
            ${menuNote ? `<p class="fine">${escapeHtml(menuNote)}</p>` : ""}
-           <ul class="lobby-seats">${seats}</ul>`
-        : `<p class="lede">${escapeHtml(menuNote || "Waiting for the host to deal.")}</p>
+           ${seatPicker()}`
+        : `<p class="lede">${escapeHtml(placed ? guestPlaceLine() : menuNote || "Waiting for the host to deal.")}</p>
            <p class="room-code">${escapeHtml(roomCode)}</p>`;
     return `
       <div class="room menu-room">
@@ -794,6 +843,35 @@ export function mount(root: HTMLElement): void {
   }
 
 
+  function seatPicker(): string {
+    const rows = ([0, 1, 2, 3] as Seat[])
+      .map((seat) => {
+        const options = ([0, 1, 2, 3] as Seat[])
+          .map((other) => {
+            const who = personAt(other);
+            const selected = other === seat ? "selected" : "";
+            return `<option value="${other}" ${selected}>${escapeHtml(who)} · ${seatTitle(other)}</option>`;
+          })
+          .join("");
+        return `<label class="field">${seatTitle(seat)} · with ${seatTitle(partnerOf(seat))}
+          <select data-act="seat" data-from="${seat}" aria-label="Who sits ${seatTitle(seat)}">${options}</select>
+        </label>`;
+      })
+      .join("");
+    return `<div class="seat-picker">${rows}</div>`;
+  }
+
+  function guestPlaceLine(): string {
+    const partner = names[partnerOf(me)] || "a bot";
+    return `You are sitting ${seatTitle(me)}. Your partner is ${partner}.`;
+  }
+
+  function personAt(seat: Seat): string {
+    if (seat === me) return names[seat] ? `${names[seat]} (you)` : "You";
+    if (humans.has(seat)) return names[seat] || "Friend";
+    return "Bot";
+  }
+
   function blip(freq: number, gain: number): void {
     if (!soundOn) return;
     const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
@@ -811,6 +889,10 @@ export function mount(root: HTMLElement): void {
     amp.gain.exponentialRampToValueAtTime(0.0001, audio.currentTime + 0.09);
     osc.stop(audio.currentTime + 0.1);
   }
+}
+
+function seatTitle(seat: Seat): string {
+  return (["South", "West", "North", "East"] as const)[seat];
 }
 
 function choice(act: string, mode: string, label: string, on: boolean): string {
