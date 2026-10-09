@@ -311,7 +311,36 @@ button.tile:disabled {
   padding: 4px 8px 0;
 }
 
-.side { display: flex; min-height: 100%; }
+.side { display: flex; flex-direction: column; gap: 12px; min-height: 100%; }
+.chat {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(244, 236, 223, 0.1);
+  border-radius: 16px;
+  padding: 12px;
+}
+.chat h2 { margin: 0 0 8px; font-size: 1.02rem; }
+.chat-log {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 168px;
+  overflow: auto;
+  margin-bottom: 8px;
+}
+.chat-line { margin: 0; font-size: 0.88rem; overflow-wrap: anywhere; }
+.chat-line strong { color: var(--gold); font-weight: 600; }
+.chat-line.mine strong { color: var(--cream); }
+.chat-empty { margin: 0; color: var(--muted); font-size: 0.82rem; }
+.chat-form { display: flex; gap: 6px; }
+.chat-form input {
+  flex: 1;
+  min-width: 0;
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid rgba(244, 236, 223, 0.2);
+  border-radius: 10px;
+  padding: 8px 10px;
+}
+.chat-form button { padding: 8px 12px; }
 .trick-board {
   flex: 1;
   display: flex;
