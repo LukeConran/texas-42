@@ -16,7 +16,7 @@ export interface HostLink {
 }
 
 export interface GuestLink {
-  send(message: NetMessage): void;
+  send(message: NetMessage): Promise<void>;
   close(): void;
 }
 
@@ -138,7 +138,7 @@ export async function openGuest(
 
   return {
     send(message) {
-      void deliver(code, guestId, "toHost", encode(message));
+      return deliver(code, guestId, "toHost", encode(message));
     },
     close() {
       stopped = true;

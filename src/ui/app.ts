@@ -8,6 +8,7 @@ import {
   type PlayerView,
   apply,
   bidLabel,
+  concede,
   createMatch,
   defaultSettings,
   observe,
@@ -18,6 +19,7 @@ import { guestSeats } from "../net/seats";
 import { openGuest, openHost, type GuestLink, type HostLink } from "../net/session";
 import { trumpKey, trumpName, type Trump } from "../engine/trump";
 import { boneHtml, sortHand } from "./dominoView";
+import { clearSave, readSave, writeSave } from "./save";
 import { lessonById, sameLessonAction, wantedKey, type Lesson } from "./lessons";
 import { type Names, RULES_HTML, contractLine, needLine, seatWord, turnLine, yourPlayLine } from "./text";
 
@@ -74,6 +76,8 @@ export function mount(root: HTMLElement): void {
   let joinCode = new URLSearchParams(location.search).get("room")?.toUpperCase() ?? "";
   if (joinCode) screen = "join";
   let menuNote = "";
+  let resumeNote = "";
+  let confirmLeave = false;
   let showHands = false;
   let soundOn = false;
   let pace: Pace = "normal";
@@ -88,6 +92,24 @@ export function mount(root: HTMLElement): void {
   let audio: AudioContext | null = null;
   let chat: Array<{ from: string; text: string; mine: boolean }> = [];
   let chatDraft = "";
+
+  const stored = rememberStorage();
+  const saved = joinCode || !stored ? null : readSave(stored);
+  if (saved?.kind === "guest") {
+    screen = "join";
+    joinCode = saved.room;
+    playerName = saved.name;
+    menuNote = "Join again to sit back down. The room is open if the host is still there.";
+  } else if (saved?.kind === "local") {
+    state = saved.state;
+    pace = saved.pace;
+    me = saved.me;
+    names = [...saved.names];
+    role = "local";
+    humans = new Set();
+    screen = "table";
+    resumeNote = saved.wasOnline ? "This table is on this browser now. The other chairs are bots." : "";
+  }
 
   root.addEventListener("input", (event) => {
     const target = event.target as HTMLInputElement | null;
@@ -136,12 +158,17 @@ export function mount(root: HTMLElement): void {
     else if (act === "join") void startJoin();
     else if (act === "deal-online") startOnlineMatch();
     else if (act === "copy") void copyLink();
-    else if (act === "menu") leaveTable();
+    else if (act === "menu") confirmLeave = true;
+    else if (act === "stay") confirmLeave = false;
+    else if (act === "leave-yes") void confirmedLeave();
     else if (act === "rules") rulesOpen = !rulesOpen;
     else if (act === "close-rules") rulesOpen = false;
     else if (act === "hands" && role === "local") showHands = !showHands;
     else if (act === "sound") soundOn = !soundOn;
-    else if (act === "pace") pace = (target.dataset.pace as Pace) || "normal";
+    else if (act === "pace") {
+      pace = (target.dataset.pace as Pace) || "normal";
+      persist();
+    }
     else if (act === "bid") onBid(target.dataset.amount === "pass" ? "pass" : Number(target.dataset.amount));
     else if (act === "trump") onTrump(target.dataset.trump ?? "");
     else if (act === "select") onSelect(target.dataset.key ?? "");
@@ -157,6 +184,7 @@ export function mount(root: HTMLElement): void {
   });
 
   render();
+  queue();
 
   function startMatch(): void {
     stopNet();
@@ -170,7 +198,10 @@ export function mount(root: HTMLElement): void {
     selectedKey = null;
     screen = "table";
     rulesOpen = false;
+    confirmLeave = false;
+    resumeNote = "";
     blip(660, 0.03);
+    persist();
     render();
     queue();
   }
@@ -239,6 +270,7 @@ export function mount(root: HTMLElement): void {
     }
     selectedKey = null;
     if (role === "host") broadcast();
+    persist();
     render();
     queue();
   }
@@ -283,6 +315,45 @@ export function mount(root: HTMLElement): void {
     guest?.close();
   }
 
+  async function confirmedLeave(): Promise<void> {
+    confirmLeave = false;
+    if (role === "guest" && guestLink) {
+      try {
+        await guestLink.send({ type: "resign" });
+      } catch {
+        // The room may already be gone. This browser still leaves.
+      }
+    }
+    forget();
+    leaveTable();
+    render();
+  }
+
+  function persist(): void {
+    const storage = rememberStorage();
+    if (!storage || lesson) return;
+    if (role === "guest" && roomCode) {
+      writeSave(storage, { kind: "guest", version: 1, room: roomCode, name: cleanName(playerName) });
+      return;
+    }
+    if ((role === "local" || role === "host") && state && screen === "table") {
+      writeSave(storage, {
+        kind: "local",
+        version: 1,
+        state,
+        pace,
+        me,
+        names: [names[0] ?? null, names[1] ?? null, names[2] ?? null, names[3] ?? null],
+        wasOnline: role === "host",
+      });
+    }
+  }
+
+  function forget(): void {
+    const storage = rememberStorage();
+    if (storage) clearSave(storage);
+  }
+
   function leaveTable(): void {
     role = "local";
     stopNet();
@@ -310,6 +381,7 @@ export function mount(root: HTMLElement): void {
       return;
     }
     if (screen === "lobby" || connecting || hostLink || guestLink) {
+      forget();
       netToken += 1;
       connecting = false;
       stopNet();
@@ -337,12 +409,15 @@ export function mount(root: HTMLElement): void {
     if (!def) return;
     stopNet();
     endLesson();
+    forget();
     role = "local";
     me = 0;
     names = [null, null, null, null];
     humans = new Set();
     showHands = false;
     lesson = { def, beat: 0 };
+    resumeNote = "";
+    confirmLeave = false;
     state = createMatch(matchSettings(def.seed));
     selectedKey = null;
     alertText = "";
@@ -444,6 +519,7 @@ export function mount(root: HTMLElement): void {
       state = null;
       screen = "lobby";
       menuNote = "";
+      forget();
     } catch (error) {
       if (token !== netToken) return;
       stopNet();
@@ -479,6 +555,17 @@ export function mount(root: HTMLElement): void {
     }
     if (message.type === "rematch") {
       if (state?.phase === "matchComplete") startOnlineMatch();
+      return;
+    }
+    if (message.type === "resign") {
+      humans.delete(seat);
+      if (state && state.phase !== "matchComplete") {
+        state = concede(state, seat);
+        broadcast();
+        persist();
+      }
+      render();
+      queue();
       return;
     }
     if (message.type !== "action" || !state || state.turn !== seat) return;
@@ -564,6 +651,7 @@ export function mount(root: HTMLElement): void {
       }
       guestLink = opened;
       roomCode = code;
+      persist();
       if (!state) {
         screen = "lobby";
         menuNote = "Connected. Waiting for the host to deal.";
@@ -609,6 +697,7 @@ export function mount(root: HTMLElement): void {
 
   function onHostClosed(): void {
     if (role !== "guest") return;
+    forget();
     guestLink = null;
     role = "local";
     me = 0;
@@ -659,8 +748,10 @@ export function mount(root: HTMLElement): void {
     showHands = false;
     screen = "table";
     rulesOpen = false;
+    confirmLeave = false;
     blip(660, 0.03);
     broadcast();
+    persist();
     render();
     queue();
   }
@@ -834,6 +925,7 @@ export function mount(root: HTMLElement): void {
           <div class="brand-block">
             <p class="brand">Texas 42</p>
             <p class="brand-sub">Hand ${game.handNumber} · first to ${target} ${matchUnit}</p>
+            ${resumeNote ? `<p class="resume-note">${escapeHtml(resumeNote)}</p>` : ""}
           </div>
           <div class="scoreline" aria-label="Match score">
             <span class="us"><small>You &amp; Partner</small><strong>${us}</strong></span>
@@ -884,6 +976,7 @@ export function mount(root: HTMLElement): void {
         </div>
         ${trumpBadgeHtml(game)}
         ${overlayHtml(game)}
+        ${confirmLeave ? leaveConfirmHtml() : ""}
         ${rulesOpen ? `<div class="rules-pop" role="dialog" aria-label="Rules"><button type="button" class="tool close-rules" data-act="close-rules">Close</button>${RULES_HTML}</div>` : ""}
       </div>`;
   }
@@ -1078,6 +1171,26 @@ export function mount(root: HTMLElement): void {
       </section>`;
   }
 
+  function leaveConfirmHtml(): string {
+    const copy = lesson
+      ? "Leave this lesson?"
+      : role === "guest"
+        ? "Leave this table? Your team resigns the match."
+        : role === "host"
+          ? "Leave and close the room?"
+          : "Leave this game?";
+    return `
+      <div class="overlay" role="dialog" aria-label="Leave the table">
+        <div class="result-card">
+          <h2>${escapeHtml(copy)}</h2>
+          <div class="menu-actions">
+            <button type="button" class="primary" data-act="leave-yes">Leave</button>
+            <button type="button" class="ghost" data-act="stay">Stay</button>
+          </div>
+        </div>
+      </div>`;
+  }
+
   function overlayHtml(game: GameState): string {
     if (lesson) return "";
     const result = game.lastResult;
@@ -1187,6 +1300,15 @@ export function mount(root: HTMLElement): void {
 
 function seatTitle(seat: Seat): string {
   return (["South", "West", "North", "East"] as const)[seat];
+}
+
+function rememberStorage(): Storage | null {
+  try {
+    if (typeof localStorage === "undefined") return null;
+    return localStorage;
+  } catch {
+    return null;
+  }
 }
 
 function matchSettings(seed?: number): MatchSettings {

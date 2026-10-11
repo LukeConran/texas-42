@@ -9,7 +9,8 @@ export type NetMessage =
   | { type: "action"; action: Action }
   | { type: "rematch" }
   | { type: "chat"; text: string; from?: string }
-  | { type: "seated"; seat: Seat; names: Names };
+  | { type: "seated"; seat: Seat; names: Names }
+  | { type: "resign" };
 
 export const CHAT_LIMIT = 200;
 
@@ -44,6 +45,7 @@ export function decode(raw: string): NetMessage | null {
       }) as Names;
       return { type: "seated", seat: value.seat, names };
     }
+    if (value.type === "resign") return { type: "resign" };
     if (value.type === "chat") {
       const text = chatText(value.text);
       if (!text) return null;

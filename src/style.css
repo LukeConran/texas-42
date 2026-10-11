@@ -50,6 +50,7 @@ h1, h2, h3, .brand, .scoreline strong, .result-card h2 {
 }
 .brand { margin: 0; font-size: 1.35rem; color: var(--gold); }
 .brand-sub { margin: 0; color: var(--muted); font-size: 0.82rem; }
+.resume-note { margin: 4px 0 0; color: var(--gold); font-size: 0.9rem; max-width: 280px; }
 .brand-block { min-width: 160px; }
 
 .scoreline {

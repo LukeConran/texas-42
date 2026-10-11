@@ -368,6 +368,34 @@ function applyAcknowledge(state: GameState): GameState {
   return finishHand(state, handPoints, completedTricks);
 }
 
+/** The seat leaves the match. The other team reaches the target. */
+export function concede(state: GameState, seat: Seat): GameState {
+  if (state.phase === "matchComplete" && state.lastResult?.matchWinner != null) return state;
+  const winner = (1 - teamOf(seat)) as Team;
+  const scores: [number, number] = [...state.scores];
+  scores[winner] = Math.max(scores[winner], state.settings.target);
+  const previous = state.lastResult;
+  const result: HandResult = {
+    passed: false,
+    bid: previous?.bid ?? state.highBid,
+    bidder: previous?.bidder ?? state.highBidder,
+    trump: previous?.trump ?? state.trump,
+    made: previous?.made ?? null,
+    captured: previous?.captured ?? ([...state.handPoints] as [number, number]),
+    awarded: previous?.awarded ?? [0, 0],
+    matchWinner: winner,
+  };
+  const winners = winner === 0 ? "South and North" : "West and East";
+  return {
+    ...state,
+    phase: "matchComplete",
+    turn: null,
+    scores,
+    lastResult: result,
+    log: appendLog(state.log, `${actor(seat, "resigns", "resign")}. ${winners} win the match.`),
+  };
+}
+
 function applyNextHand(state: GameState): GameState {
   if (state.phase !== "handComplete") throw new Error("The hand is still in play");
   if (state.lastResult?.matchWinner != null) throw new Error("The match is over");
