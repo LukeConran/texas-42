@@ -273,8 +273,9 @@ export function mount(root: HTMLElement): void {
     selectedKey = null;
     alertText = "";
     rulesOpen = false;
-<<<<<<< HEAD
     endLesson();
+    chat = [];
+    chatDraft = "";
   }
 
   function endLesson(): void {
@@ -354,10 +355,6 @@ export function mount(root: HTMLElement): void {
       render();
     };
     step();
-=======
-    chat = [];
-    chatDraft = "";
->>>>>>> origin/main
   }
 
   function broadcast(): void {
