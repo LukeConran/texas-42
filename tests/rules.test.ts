@@ -212,6 +212,20 @@ describe("scoring", () => {
     expect(scoreContract(126, 42, 0, "marks").bidderAward).toBe(3);
     expect(scoreContract(31, 10, 32, "marks")).toEqual({ made: false, bidderAward: 0, defenderAward: 1 });
   });
+
+  it("uses the singular when a hand awards one mark", () => {
+    let state = createMatch({ ...defaultSettings(3), scoringMode: "marks", target: 7 });
+    for (let steps = 0; steps < 80 && state.lastResult?.awarded[0] !== 1 && state.lastResult?.awarded[1] !== 1; steps++) {
+      state = stepBot(state);
+    }
+    const awarded = state.lastResult?.awarded;
+    expect(awarded).toBeTruthy();
+    const line = state.log.at(-1) ?? "";
+    expect(line).toContain("1 mark");
+    expect(line).not.toContain("1 marks");
+    const other = awarded![0] === 1 ? awarded![1] : awarded![0];
+    expect(line).toContain(`${other} ${other === 1 ? "mark" : "marks"}`);
+  });
 });
 
 describe("a full hand", () => {

@@ -2,21 +2,23 @@ import { BOT_STYLES, chooseAction } from "../ai/heuristic";
 import type { Domino, Seat } from "../engine/domino";
 import { dominoKey, dominoLabel, partnerOf, seatPlace, teamOf } from "../engine/domino";
 import {
+  type Action,
   type GameState,
   type MatchSettings,
   type PlayerView,
-  type ScoringMode,
   apply,
   bidLabel,
   createMatch,
   defaultSettings,
   observe,
+  scoreUnit,
 } from "../engine/game";
-import { isSeat, type NetMessage } from "../net/messages";
+import { chatSpeaker, chatText, isSeat, type NetMessage } from "../net/messages";
 import { guestSeats } from "../net/seats";
 import { openGuest, openHost, type GuestLink, type HostLink } from "../net/session";
 import { trumpKey, trumpName, type Trump } from "../engine/trump";
 import { boneHtml, sortHand } from "./dominoView";
+import { lessonById, sameLessonAction, wantedKey, type Lesson } from "./lessons";
 import { type Names, RULES_HTML, contractLine, needLine, seatWord, turnLine, yourPlayLine } from "./text";
 
 const PACE_MS = {
@@ -26,6 +28,18 @@ const PACE_MS = {
 } as const;
 
 type Pace = keyof typeof PACE_MS;
+
+const HERO_TILES: Domino[] = [
+  { hi: 6, lo: 6 },
+  { hi: 5, lo: 4 },
+  { hi: 3, lo: 2 },
+];
+
+function heroTilesHtml(): string {
+  return `<div class="hero-tiles" aria-hidden="true">
+    ${HERO_TILES.map((d) => boneHtml(d, { size: "lg" })).join("")}
+  </div>`;
+}
 
 const HONORS: Domino[] = [
   { hi: 5, lo: 0 },
@@ -48,7 +62,7 @@ const TRUMP_BUTTONS: Array<{ trump: Trump; label: string; hint: string }> = [
 ];
 
 export function mount(root: HTMLElement): void {
-  let screen: "menu" | "lobby" | "table" = "menu";
+  let screen: "home" | "online" | "host" | "join" | "lobby" | "table" = "home";
   let role: "local" | "host" | "guest" = "local";
   let me: Seat = 0;
   let names: Names = [null, null, null, null];
@@ -58,25 +72,37 @@ export function mount(root: HTMLElement): void {
   let roomCode = "";
   let playerName = "";
   let joinCode = new URLSearchParams(location.search).get("room")?.toUpperCase() ?? "";
+  if (joinCode) screen = "join";
   let menuNote = "";
-  let scoringMode: ScoringMode = "marks";
-  let openingLeadMustBeTrump = false;
   let showHands = false;
   let soundOn = false;
   let pace: Pace = "normal";
   let rulesOpen = false;
   let placed = false;
   let state: GameState | null = null;
+  let lesson: { def: Lesson; beat: number } | null = null;
+  let lessonToken = 0;
   let selectedKey: string | null = null;
   let alertText = "";
   let timer = 0;
   let audio: AudioContext | null = null;
+  let chat: Array<{ from: string; text: string; mine: boolean }> = [];
+  let chatDraft = "";
 
   root.addEventListener("input", (event) => {
     const target = event.target as HTMLInputElement | null;
     if (!target) return;
     if (target.dataset.field === "name") playerName = target.value;
     if (target.dataset.field === "code") joinCode = target.value.toUpperCase();
+    if (target.dataset.field === "chat") chatDraft = target.value;
+  });
+
+  root.addEventListener("submit", (event) => {
+    const form = event.target;
+    if (!(form instanceof HTMLFormElement) || form.dataset.act !== "chat-form") return;
+    event.preventDefault();
+    const field = form.querySelector<HTMLInputElement>('[data-field="chat"]');
+    sendChat(field?.value ?? "");
   });
 
   root.addEventListener("change", (event) => {
@@ -92,15 +118,25 @@ export function mount(root: HTMLElement): void {
     const target = (event.target as HTMLElement | null)?.closest<HTMLElement>("[data-act]");
     if (!target || !root.contains(target)) return;
     const act = target.dataset.act;
-    if (act === "seat") return;
-    if (act === "start") startMatch();
+    if (act === "seat" || act === "chat-form") return;
+    if (act === "online") {
+      menuNote = "";
+      screen = "online";
+    } else if (act === "offline") startMatch();
+    else if (act === "tutorial") startLesson("follow");
+    else if (act === "host-form") {
+      menuNote = "";
+      screen = "host";
+    } else if (act === "join-form") {
+      menuNote = "";
+      screen = "join";
+    } else if (act === "back") goBack();
+    else if (act === "lesson") startLesson(target.dataset.lesson ?? "");
     else if (act === "host") void startHost();
     else if (act === "join") void startJoin();
     else if (act === "deal-online") startOnlineMatch();
     else if (act === "copy") void copyLink();
     else if (act === "menu") leaveTable();
-    else if (act === "mode") scoringMode = target.dataset.mode === "marks" ? "marks" : "points";
-    else if (act === "house") openingLeadMustBeTrump = !openingLeadMustBeTrump;
     else if (act === "rules") rulesOpen = !rulesOpen;
     else if (act === "close-rules") rulesOpen = false;
     else if (act === "hands" && role === "local") showHands = !showHands;
@@ -129,13 +165,8 @@ export function mount(root: HTMLElement): void {
     names = [null, null, null, null];
     humans = new Set();
     showHands = false;
-    const settings: MatchSettings = {
-      ...defaultSettings(),
-      scoringMode,
-      target: scoringMode === "marks" ? 7 : 250,
-      openingLeadMustBeTrump,
-    };
-    state = createMatch(settings);
+    endLesson();
+    state = createMatch(matchSettings());
     selectedKey = null;
     screen = "table";
     rulesOpen = false;
@@ -146,12 +177,14 @@ export function mount(root: HTMLElement): void {
 
   function onBid(amount: number | "pass"): void {
     if (!state || state.phase !== "bidding" || state.turn !== me) return;
+    if (finishLessonStep({ type: "bid", amount })) return;
     blip(amount === "pass" ? 320 : 540, 0.04);
     commit({ type: "bid", amount });
   }
 
   function onTrump(key: string): void {
     if (!state || state.phase !== "trump" || state.turn !== me) return;
+    if (finishLessonStep({ type: "declareTrump", trump: parseButton(key) })) return;
     blip(600, 0.04);
     commit({ type: "declareTrump", trump: parseButton(key) });
   }
@@ -159,6 +192,13 @@ export function mount(root: HTMLElement): void {
   function onSelect(key: string): void {
     if (!state || state.phase !== "playing" || state.turn !== me) return;
     const legal = new Set(observe(state, me).legalPlays.map(dominoKey));
+    if (lesson) {
+      if (!legal.has(key)) return;
+      const domino = state.hands[me].find((d) => dominoKey(d) === key);
+      if (!domino) return;
+      finishLessonStep({ type: "play", domino });
+      return;
+    }
     if (!legal.has(key)) return;
     if (selectedKey === key) {
       playSelected();
@@ -205,6 +245,7 @@ export function mount(root: HTMLElement): void {
 
   function queue(): void {
     window.clearTimeout(timer);
+    if (lesson) return;
     if (!state || screen !== "table" || role === "guest") return;
     const delays = PACE_MS[pace];
     if (state.phase === "trickComplete") {
@@ -249,14 +290,115 @@ export function mount(root: HTMLElement): void {
     names = [null, null, null, null];
     humans = new Set();
     state = null;
-    screen = "menu";
     roomCode = "";
     menuNote = "";
     showHands = false;
     selectedKey = null;
     alertText = "";
     rulesOpen = false;
+    endLesson();
+    chat = [];
+    chatDraft = "";
     placed = false;
+    screen = "home";
+  }
+
+  function goBack(): void {
+    if (screen === "online") {
+      menuNote = "";
+      screen = "home";
+      return;
+    }
+    if (screen === "lobby" || connecting || hostLink || guestLink) {
+      netToken += 1;
+      connecting = false;
+      stopNet();
+      role = "local";
+      me = 0;
+      names = [null, null, null, null];
+      humans = new Set();
+      state = null;
+      roomCode = "";
+      chat = [];
+      chatDraft = "";
+      placed = false;
+    }
+    menuNote = "";
+    screen = "online";
+  }
+
+  function endLesson(): void {
+    lesson = null;
+    lessonToken += 1;
+  }
+
+  function startLesson(id: string): void {
+    const def = lessonById(id);
+    if (!def) return;
+    stopNet();
+    endLesson();
+    role = "local";
+    me = 0;
+    names = [null, null, null, null];
+    humans = new Set();
+    showHands = false;
+    lesson = { def, beat: 0 };
+    state = createMatch(matchSettings(def.seed));
+    selectedKey = null;
+    alertText = "";
+    screen = "table";
+    rulesOpen = false;
+    pumpLesson();
+  }
+
+  function finishLessonStep(action: Action): boolean {
+    if (!lesson || !state) return false;
+    const beat = lesson.def.beats[lesson.beat];
+    if (!beat) return true;
+    if (beat.kind !== "you" || !sameLessonAction(beat.action, action)) {
+      alertText = beat && beat.kind === "you" ? beat.hint : "Watch the table.";
+      return true;
+    }
+    const before = state;
+    alertText = "";
+    blip(action.type === "play" ? 420 : 540, 0.04);
+    commit(action);
+    if (state === before) return true;
+    lesson.beat += 1;
+    pumpLesson();
+    return true;
+  }
+
+  function pumpLesson(): void {
+    const token = (lessonToken += 1);
+    const step = (): void => {
+      if (token !== lessonToken || !lesson || !state) return;
+      const beat = lesson.def.beats[lesson.beat];
+      if (!beat || beat.kind === "you") {
+        render();
+        return;
+      }
+      const paced = beat.action.type === "play" || beat.action.type === "acknowledgeTrick";
+      const run = (): void => {
+        if (token !== lessonToken || !lesson || !state) return;
+        try {
+          state = apply(state, beat.action);
+        } catch (error) {
+          alertText = error instanceof Error ? error.message : "The lesson could not continue.";
+          render();
+          return;
+        }
+        lesson.beat += 1;
+        step();
+      };
+      if (!paced) {
+        run();
+        return;
+      }
+      timer = window.setTimeout(run, 360);
+      render();
+    };
+    step();
   }
 
   function broadcast(): void {
@@ -273,32 +415,43 @@ export function mount(root: HTMLElement): void {
   }
 
   let connecting = false;
+  let netToken = 0;
 
   async function startHost(): Promise<void> {
     if (connecting) return;
     connecting = true;
+    const token = (netToken += 1);
     role = "local";
     stopNet();
     me = 0;
     showHands = false;
     menuNote = "Opening a room…";
-    screen = "menu";
+    screen = "host";
     render();
     try {
       names = [cleanName(playerName) || null, null, null, null];
       humans = new Set<Seat>([0]);
-      hostLink = await openHost(onGuestMessage, onGuestClose);
+      chat = [];
+      chatDraft = "";
+      const opened = await openHost(onGuestMessage, onGuestClose);
+      if (token !== netToken) {
+        opened.close();
+        return;
+      }
+      hostLink = opened;
       role = "host";
       roomCode = hostLink.code;
       state = null;
       screen = "lobby";
       menuNote = "";
     } catch (error) {
+      if (token !== netToken) return;
       stopNet();
       role = "local";
-      screen = "menu";
+      screen = "host";
       menuNote = error instanceof Error ? error.message : "Could not open a room.";
     } finally {
+      if (token !== netToken) return;
       connecting = false;
       render();
     }
@@ -306,6 +459,14 @@ export function mount(root: HTMLElement): void {
 
   function onGuestMessage(seat: Seat, message: NetMessage): void {
     if (role !== "host" || !hostLink) return;
+    if (message.type === "chat") {
+      const text = chatText(message.text);
+      if (!text) return;
+      const from = names[seat] || seatWord(seat, me, names);
+      relayChat(from, text, seat);
+      rememberChat(from, text, false);
+      return;
+    }
     if (message.type === "hello") {
       const next = [...names] as Names;
       next[seat] = cleanName(message.name) || null;
@@ -378,31 +539,43 @@ export function mount(root: HTMLElement): void {
     const code = joinCode.trim().toUpperCase();
     if (code.length < 4) {
       menuNote = "Enter the four-letter room code.";
+      screen = "join";
       render();
       return;
     }
     connecting = true;
+    const token = (netToken += 1);
     stopNet();
+    role = "guest";
+    me = 0;
+    chat = [];
+    chatDraft = "";
     showHands = false;
     menuNote = "Joining the room…";
-    screen = "menu";
+    screen = "join";
     render();
     try {
-      role = "guest";
-      me = 0;
       placed = false;
-      guestLink = await openGuest(code, cleanName(playerName), onHostMessage, onHostClosed);
+      const opened = await openGuest(code, cleanName(playerName), onHostMessage, onHostClosed);
+      if (token !== netToken) {
+        opened.close();
+        role = "local";
+        return;
+      }
+      guestLink = opened;
       roomCode = code;
       if (!state) {
         screen = "lobby";
         menuNote = "Connected. Waiting for the host to deal.";
       }
     } catch (error) {
+      if (token !== netToken) return;
       stopNet();
       role = "local";
-      screen = "menu";
+      screen = "join";
       menuNote = error instanceof Error ? error.message : "Could not join that room.";
     } finally {
+      if (token !== netToken) return;
       connecting = false;
       render();
     }
@@ -416,6 +589,12 @@ export function mount(root: HTMLElement): void {
       names = [message.names[0] ?? null, message.names[1] ?? null, message.names[2] ?? null, message.names[3] ?? null];
       placed = true;
       render();
+      return;
+    }
+    if (message.type === "chat") {
+      const text = chatText(message.text);
+      if (!text) return;
+      rememberChat(chatSpeaker(message.from) || "Table", text, false);
       return;
     }
     if (message.type !== "sync") return;
@@ -434,22 +613,47 @@ export function mount(root: HTMLElement): void {
     role = "local";
     me = 0;
     state = null;
-    screen = "menu";
+    screen = "home";
     showHands = false;
     placed = false;
+    chat = [];
+    chatDraft = "";
     menuNote = "The host closed the room.";
+    render();
+  }
+
+  function sendChat(raw: string): void {
+    const text = chatText(raw);
+    if (!text) return;
+    if (role === "guest") {
+      if (!guestLink) return;
+      guestLink.send({ type: "chat", text });
+    } else if (role === "host") {
+      if (!hostLink) return;
+      relayChat(names[me] || "Host", text, null);
+    } else {
+      return;
+    }
+    chatDraft = "";
+    rememberChat("You", text, true);
+  }
+
+  function relayChat(from: string, text: string, except: Seat | null): void {
+    if (!hostLink) return;
+    for (const seat of guestSeats(me, humans)) {
+      if (seat === except) continue;
+      hostLink.send(seat, { type: "chat", text, from });
+    }
+  }
+
+  function rememberChat(from: string, text: string, mine: boolean): void {
+    chat = [...chat, { from, text, mine }].slice(-40);
     render();
   }
 
   function startOnlineMatch(): void {
     if (role !== "host") return;
-    const settings: MatchSettings = {
-      ...defaultSettings(),
-      scoringMode,
-      target: scoringMode === "marks" ? 7 : 250,
-      openingLeadMustBeTrump,
-    };
-    state = createMatch(settings);
+    state = createMatch(matchSettings());
     selectedKey = null;
     alertText = "";
     showHands = false;
@@ -488,56 +692,96 @@ export function mount(root: HTMLElement): void {
   }
 
   function render(): void {
+    const active = document.activeElement;
+    const chatFocused = active instanceof HTMLInputElement && active.dataset.field === "chat";
+    const caret = chatFocused ? active.selectionStart : null;
     if (screen === "table" && state) root.innerHTML = tableHtml(state);
     else if (screen === "lobby") root.innerHTML = lobbyHtml();
-    else root.innerHTML = menuHtml();
+    else if (screen === "online") root.innerHTML = onlineHtml();
+    else if (screen === "host") root.innerHTML = hostFormHtml();
+    else if (screen === "join") root.innerHTML = joinFormHtml();
+    else root.innerHTML = homeHtml();
+    const log = root.querySelector<HTMLElement>(".chat-log");
+    if (log) log.scrollTop = log.scrollHeight;
+    if (!chatFocused) return;
+    const field = root.querySelector<HTMLInputElement>('[data-field="chat"]');
+    if (!field) return;
+    field.focus();
+    const pos = caret ?? field.value.length;
+    field.setSelectionRange(pos, pos);
   }
 
-  function menuHtml(): string {
+  function homeHtml(): string {
     return `
       <div class="room menu-room">
-        <header class="topbar">
-          <p class="brand">Texas 42</p>
-          <p class="brand-sub">Official state domino game</p>
-        </header>
+        <main class="front">
+          ${heroTilesHtml()}
+          <h1 class="front-title">Texas 42</h1>
+          <p class="front-tagline">The trick-taking domino game, dealt out online or on the couch.</p>
+          <div class="front-actions">
+            <button type="button" class="primary" data-act="online">Play Online</button>
+            <button type="button" class="secondary" data-act="offline">Play Offline</button>
+          </div>
+          <button type="button" class="link-action" data-act="tutorial">New to 42? Start the tutorial</button>
+          ${menuNote ? `<p class="fine">${escapeHtml(menuNote)}</p>` : ""}
+        </main>
+      </div>`;
+  }
+
+  function onlineHtml(): string {
+    return cardPage(
+      "Play online",
+      "Host a table for friends or drop into one with a room code.",
+      `<div class="front-actions">
+        <button type="button" class="primary" data-act="host-form">Host a Room</button>
+        <button type="button" class="secondary" data-act="join-form">Join a Room</button>
+      </div>
+      <button type="button" class="link-action" data-act="back">Back</button>`,
+    );
+  }
+
+  function hostFormHtml(): string {
+    return cardPage(
+      "Host a room",
+      "You'll get a code to share. Empty seats play as bots until friends take them.",
+      `<label class="field">Your name
+        <input data-field="name" maxlength="16" value="${escapeHtml(playerName)}" autocomplete="nickname" placeholder="e.g. Dana" />
+      </label>
+      <div class="front-actions">
+        <button type="button" class="primary" data-act="host">Host</button>
+      </div>
+      <button type="button" class="link-action" data-act="back">Back</button>
+      ${menuNote ? `<p class="fine">${escapeHtml(menuNote)}</p>` : ""}`,
+    );
+  }
+
+  function joinFormHtml(): string {
+    return cardPage(
+      "Join a room",
+      "Ask the host for their 4-letter room code.",
+      `<label class="field">Your name
+        <input data-field="name" maxlength="16" value="${escapeHtml(playerName)}" autocomplete="nickname" placeholder="e.g. Dana" />
+      </label>
+      <label class="field">Room code
+        <input data-field="code" maxlength="4" value="${escapeHtml(joinCode)}" autocapitalize="characters" spellcheck="false" placeholder="ABCD" />
+      </label>
+      <div class="front-actions">
+        <button type="button" class="primary" data-act="join">Join</button>
+      </div>
+      <button type="button" class="link-action" data-act="back">Back</button>
+      ${menuNote ? `<p class="fine">${escapeHtml(menuNote)}</p>` : ""}`,
+    );
+  }
+
+  function cardPage(title: string, lede: string, body: string): string {
+    return `
+      <div class="room menu-room">
         <main class="menu-layout">
           <section class="menu-card">
-            <h1>Sit down. Seven tiles. Forty-two points.</h1>
-            <p class="lede">You play South, with a partner across the table. West and East bid and play against you. The tiles never form a chain. This is a trick-taking game, closer to pitch or spades than to draw dominoes.</p>
-            <fieldset>
-              <legend>Match</legend>
-              <div class="choice-row">
-                ${choice("mode", "marks", "Marks to 7", scoringMode === "marks")}
-                ${choice("mode", "points", "Points to 250", scoringMode === "points")}
-              </div>
-            </fieldset>
-            <button type="button" class="check ${openingLeadMustBeTrump ? "on" : ""}" data-act="house">
-              <span class="box" aria-hidden="true"></span>
-              Opening lead must be a trump
-            </button>
-            <p class="fine">Leave that off for the usual game. The high bidder names trump, then may lead anything. Turn it on for the older house rule that the first tile has to be trump.</p>
-            <div class="menu-actions">
-              <button type="button" class="primary" data-act="start">Deal the first hand</button>
-              <button type="button" class="ghost" data-act="rules">${rulesOpen ? "Hide the rules" : "How to play"}</button>
-            </div>
-            <fieldset>
-              <legend>With friends</legend>
-              <label class="field">Your name
-                <input data-field="name" maxlength="16" value="${escapeHtml(playerName)}" autocomplete="nickname" />
-              </label>
-              <div class="menu-actions">
-                <button type="button" class="primary" data-act="host">Host a room</button>
-              </div>
-              <label class="field">Room code
-                <input data-field="code" maxlength="4" value="${escapeHtml(joinCode)}" autocapitalize="characters" spellcheck="false" />
-              </label>
-              <div class="menu-actions">
-                <button type="button" class="ghost" data-act="join">Join with code</button>
-              </div>
-              ${menuNote ? `<p class="fine">${escapeHtml(menuNote)}</p>` : ""}
-            </fieldset>
+            <h1>${title}</h1>
+            <p class="lede">${escapeHtml(lede)}</p>
+            ${body}
           </section>
-          ${rulesOpen ? `<section class="rules-card">${RULES_HTML}</section>` : ""}
         </main>
       </div>`;
   }
@@ -546,11 +790,11 @@ export function mount(root: HTMLElement): void {
     const hostControls =
       role === "host"
         ? `<p class="room-code">${escapeHtml(roomCode)}</p>
-           <p class="fine">Share the code or this link. Partners sit across: South with North, West with East. Put two people across from each other to partner them, or side by side to oppose them. An empty seat is a bot. Seats stay put once the first hand is dealt. Keep this tab open for the whole match.</p>
-           <p class="fine">${escapeHtml(roomLink())}</p>
+           <p class="fine">Share the code or link below. Partners sit across: South with North, West with East. Put two people across from each other to partner them, or side by side to oppose them. An empty seat is a bot. Seats stay put once the first hand is dealt. Keep this tab open for the whole match.</p>
+           <p class="fine room-link">${escapeHtml(roomLink())}</p>
            <div class="menu-actions">
              <button type="button" class="primary" data-act="deal-online">Deal the first hand</button>
-             <button type="button" class="ghost" data-act="copy">Copy link</button>
+             <button type="button" class="secondary" data-act="copy">Copy link</button>
            </div>
            ${menuNote ? `<p class="fine">${escapeHtml(menuNote)}</p>` : ""}
            ${seatPicker()}`
@@ -566,9 +810,8 @@ export function mount(root: HTMLElement): void {
           <section class="menu-card">
             <h1>${role === "host" ? "Your table is open." : "You are in the room."}</h1>
             ${hostControls}
-            <div class="menu-actions">
-              <button type="button" class="ghost" data-act="menu">Leave</button>
-            </div>
+            ${chatHtml()}
+            <button type="button" class="link-action" data-act="back">Back</button>
           </section>
         </main>
       </div>`;
@@ -578,18 +821,19 @@ export function mount(root: HTMLElement): void {
     const mine = teamOf(me);
     const us = game.scores[mine];
     const them = game.scores[mine === 0 ? 1 : 0];
-    const unit = game.settings.scoringMode === "marks" ? "marks" : "points";
+    const matchUnit = scoreUnit(game.settings.scoringMode, game.settings.target);
     const target = game.settings.target;
     const handsButton =
-      role === "local"
+      role === "local" && !lesson
         ? `<button type="button" class="tool ${showHands ? "on" : ""}" data-act="hands">${showHands ? "Hide hands" : "Show hands"}</button>`
         : "";
     return `
       <div class="room">
+        ${coachHtml()}
         <header class="topbar">
           <div class="brand-block">
             <p class="brand">Texas 42</p>
-            <p class="brand-sub">Hand ${game.handNumber} · first to ${target} ${unit}</p>
+            <p class="brand-sub">Hand ${game.handNumber} · first to ${target} ${matchUnit}</p>
           </div>
           <div class="scoreline" aria-label="Match score">
             <span class="us"><small>You &amp; Partner</small><strong>${us}</strong></span>
@@ -612,7 +856,7 @@ export function mount(root: HTMLElement): void {
                 <div class="middle">
                   ${seatBlock(game, seatAt("w"), "west")}
                   <div class="trick-wrap">
-                    <p class="status" aria-live="polite">${escapeHtml(turnLine(game, me, names))}</p>
+                    <p class="status" aria-live="polite">${escapeHtml(lessonOver() ? "Lesson complete." : turnLine(game, me, names))}</p>
                     <div class="trick">${trickSlots(game)}</div>
                     <p class="contract">${escapeHtml(handBanner(game, me, names))}</p>
                     <p class="count-out">${escapeHtml(countOutLine(game))}</p>
@@ -628,13 +872,14 @@ export function mount(root: HTMLElement): void {
             <div class="dock">
               ${dockHtml(game)}
             </div>
-            ${yourBidRow(game)}
+            ${yourBidRow(game, me)}
             <div class="your-hand" aria-label="Your hand">
               ${yourHandHtml(game)}
             </div>
           </section>
           <aside class="side">
             ${trickBoardHtml(game)}
+            ${chatHtml()}
           </aside>
         </div>
         ${trumpBadgeHtml(game)}
@@ -702,23 +947,30 @@ export function mount(root: HTMLElement): void {
 
   function yourHandHtml(game: GameState): string {
     const legal = legalKeys(game);
-    const yourTurn = game.phase === "playing" && game.turn === me;
+    const yourTurn = game.phase === "playing" && game.turn === me && !lessonOver();
     return sortHand(game.hands[me], game.trump)
       .map((d) => {
         const key = dominoKey(d);
         const playable = !yourTurn || legal.has(key);
+        const wanted = wantedKey(lesson?.def.beats[lesson.beat]);
         return boneHtml(d, {
           size: "lg",
           trump: game.trump,
           interactive: playable && yourTurn,
           selected: selectedKey === key && playable,
           locked: yourTurn && !legal.has(key),
+          marked: yourTurn && wanted === key,
         });
       })
       .join("");
   }
 
+  function lessonOver(): boolean {
+    return Boolean(lesson && lesson.beat >= lesson.def.beats.length);
+  }
+
   function dockHtml(game: GameState): string {
+    if (lessonOver()) return `<p class="dock-note">Lesson complete.</p>`;
     if (game.phase === "bidding" && game.turn === me) {
       const amounts = observe(game, me).legalBids;
       const buttons = amounts
@@ -807,7 +1059,27 @@ export function mount(root: HTMLElement): void {
     return `<aside class="trump-badge" aria-live="polite" aria-label="Trump is ${label}"><p class="trump-kicker">Trump</p><strong>${escapeHtml(label)}</strong>${icon}</aside>`;
   }
 
+  function coachHtml(): string {
+    if (!lesson) return "";
+    const beat = lesson.def.beats[lesson.beat];
+    const say = beat ? (beat.kind === "you" ? beat.say : "Watch the table.") : lesson.def.done;
+    const next = beat
+      ? ""
+      : `<div class="menu-actions">
+          <button type="button" class="primary" data-act="lesson" data-lesson="follow">Follow suit</button>
+          <button type="button" class="ghost" data-act="lesson" data-lesson="count">Count the points</button>
+        </div>`;
+    return `
+      <section class="coach" aria-live="polite">
+        <p class="coach-kicker">${escapeHtml(lesson.def.title)}</p>
+        <p>${escapeHtml(say)}</p>
+        ${alertText ? `<p class="coach-hint">${escapeHtml(alertText)}</p>` : ""}
+        ${next}
+      </section>`;
+  }
+
   function overlayHtml(game: GameState): string {
+    if (lesson) return "";
     const result = game.lastResult;
     if (!result || result.passed) return "";
     if (game.phase !== "handComplete" && game.phase !== "matchComplete") return "";
@@ -817,7 +1089,8 @@ export function mount(root: HTMLElement): void {
     const mine = teamOf(me);
     const usAward = result.awarded[mine];
     const themAward = result.awarded[mine === 0 ? 1 : 0];
-    const unit = game.settings.scoringMode === "marks" ? "marks" : "points";
+    const ourUnit = scoreUnit(game.settings.scoringMode, usAward);
+    const theirUnit = scoreUnit(game.settings.scoringMode, themAward);
     const winner =
       result.matchWinner == null
         ? ""
@@ -834,7 +1107,7 @@ export function mount(root: HTMLElement): void {
           <p class="result-kicker">${escapeHtml(bidder)} · ${escapeHtml(String(result.bid))} · ${escapeHtml(trump)}</p>
           <h2>${made}</h2>
           <p>Captured this hand: your team ${result.captured[mine]}, opponents ${result.captured[mine === 0 ? 1 : 0]}.</p>
-          <p>Awarded: your team ${usAward} ${unit}, opponents ${themAward} ${unit}.</p>
+          <p>Awarded: your team ${usAward} ${ourUnit}, opponents ${themAward} ${theirUnit}.</p>
           <p class="result-score">Us ${game.scores[mine]} · Them ${game.scores[mine === 0 ? 1 : 0]}</p>
           ${winner ? `<p class="winner">${winner}</p>` : ""}
           ${next}
@@ -872,6 +1145,27 @@ export function mount(root: HTMLElement): void {
     return "Bot";
   }
 
+  function chatHtml(): string {
+    if (role !== "host" && role !== "guest") return "";
+    const lines = chat
+      .map(
+        (line) =>
+          `<p class="chat-line ${line.mine ? "mine" : ""}"><strong>${escapeHtml(line.from)}</strong> ${escapeHtml(line.text)}</p>`,
+      )
+      .join("");
+    return `
+      <section class="chat" aria-label="Table talk">
+        <h2>Table talk</h2>
+        <div class="chat-log">
+          ${lines || `<p class="chat-empty">Messages stay in this room, and they are not bids or plays.</p>`}
+        </div>
+        <form class="chat-form" data-act="chat-form">
+          <input data-field="chat" maxlength="200" placeholder="Message the table" value="${escapeHtml(chatDraft)}" autocomplete="off" />
+          <button type="submit" class="primary">Send</button>
+        </form>
+      </section>`;
+  }
+
   function blip(freq: number, gain: number): void {
     if (!soundOn) return;
     const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
@@ -895,8 +1189,13 @@ function seatTitle(seat: Seat): string {
   return (["South", "West", "North", "East"] as const)[seat];
 }
 
-function choice(act: string, mode: string, label: string, on: boolean): string {
-  return `<button type="button" class="choice ${on ? "on" : ""}" data-act="${act}" data-mode="${mode}" aria-pressed="${on}">${label}</button>`;
+function matchSettings(seed?: number): MatchSettings {
+  return {
+    ...defaultSettings(seed),
+    scoringMode: "marks",
+    target: 7,
+    openingLeadMustBeTrump: false,
+  };
 }
 
 function bidChip(game: GameState, seat: Seat): string {
@@ -907,8 +1206,8 @@ function bidChip(game: GameState, seat: Seat): string {
   return `<p class="bid-chip">${bid.amount}</p>`;
 }
 
-function yourBidRow(game: GameState): string {
-  const chip = bidChip(game, 0);
+function yourBidRow(game: GameState, viewer: Seat): string {
+  const chip = bidChip(game, viewer);
   return chip ? `<div class="your-bid">${chip}</div>` : "";
 }
 

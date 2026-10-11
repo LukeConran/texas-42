@@ -409,7 +409,7 @@ function finishHand(
     : `${actor(bidder, "is set", "are set")} on ${bidLabel(bid)}.`;
   const awardLine =
     state.settings.scoringMode === "marks"
-      ? `Marks: your team ${awarded[0]}, opponents ${awarded[1]}.`
+      ? `Marks: your team ${awarded[0]} ${scoreUnit("marks", awarded[0])}, opponents ${awarded[1]} ${scoreUnit("marks", awarded[1])}.`
       : `Score: your team ${awarded[0]}, opponents ${awarded[1]}.`;
 
   return {
@@ -499,6 +499,13 @@ function dealHand(state: GameState): GameState {
 
 export function trickPoints(plays: Play[]): number {
   return 1 + plays.reduce((sum, p) => sum + countValue(p.domino), 0);
+}
+
+/** One mark or one point keeps the singular. The match target stays plural at 7. */
+export function scoreUnit(mode: ScoringMode, count: number): string {
+  const one = Math.abs(count) === 1;
+  if (mode === "points") return one ? "point" : "points";
+  return one ? "mark" : "marks";
 }
 
 export function bidLabel(amount: number): string {
