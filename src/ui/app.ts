@@ -18,7 +18,7 @@ import { guestSeats } from "../net/seats";
 import { openGuest, openHost, type GuestLink, type HostLink } from "../net/session";
 import { trumpKey, trumpName, type Trump } from "../engine/trump";
 import { boneHtml, sortHand } from "./dominoView";
-import { lessonById, sameLessonAction, wantedKey, type Lesson } from "./lessons";
+import { lessonById, sameLessonAction, wantedKey, type Lesson, type LessonSpot } from "./lessons";
 import { type Names, RULES_HTML, contractLine, needLine, seatWord, turnLine, yourPlayLine } from "./text";
 
 const PACE_MS = {
@@ -80,7 +80,7 @@ export function mount(root: HTMLElement): void {
   let rulesOpen = false;
   let placed = false;
   let state: GameState | null = null;
-  let lesson: { def: Lesson; beat: number } | null = null;
+  let lesson: { def: Lesson; beat: number; guide: number } | null = null;
   let lessonToken = 0;
   let selectedKey: string | null = null;
   let alertText = "";
@@ -131,6 +131,7 @@ export function mount(root: HTMLElement): void {
       menuNote = "";
       screen = "join";
     } else if (act === "back") goBack();
+    else if (act === "guide-next") advanceGuide();
     else if (act === "lesson") startLesson(target.dataset.lesson ?? "");
     else if (act === "host") void startHost();
     else if (act === "join") void startJoin();
@@ -342,7 +343,7 @@ export function mount(root: HTMLElement): void {
     names = [null, null, null, null];
     humans = new Set();
     showHands = false;
-    lesson = { def, beat: 0 };
+    lesson = { def, beat: 0, guide: 0 };
     state = createMatch(matchSettings(def.seed));
     selectedKey = null;
     alertText = "";
@@ -369,8 +370,31 @@ export function mount(root: HTMLElement): void {
     return true;
   }
 
+  function advanceGuide(): void {
+    if (!lesson || lesson.guide >= lesson.def.guide.length) return;
+    lesson.guide += 1;
+    pumpLesson();
+  }
+
+  function activeSpot(): LessonSpot | null {
+    if (!lesson) return null;
+    const step = lesson.def.guide[lesson.guide];
+    if (step) return step.spot;
+    const beat = lesson.def.beats[lesson.beat];
+    if (beat?.kind === "you" && beat.spot) return beat.spot;
+    return null;
+  }
+
+  function spotClass(spot: LessonSpot): string {
+    return activeSpot() === spot ? "lit" : "";
+  }
+
   function pumpLesson(): void {
     const token = (lessonToken += 1);
+    if (lesson && lesson.guide < lesson.def.guide.length) {
+      render();
+      return;
+    }
     const step = (): void => {
       if (token !== lessonToken || !lesson || !state) return;
       const beat = lesson.def.beats[lesson.beat];
@@ -835,7 +859,7 @@ export function mount(root: HTMLElement): void {
             <p class="brand">Texas 42</p>
             <p class="brand-sub">Hand ${game.handNumber} · first to ${target} ${matchUnit}</p>
           </div>
-          <div class="scoreline" aria-label="Match score">
+          <div class="scoreline ${spotClass("marks")}" data-spot="marks" aria-label="Match score">
             <span class="us"><small>You &amp; Partner</small><strong>${us}</strong></span>
             <span class="divider" aria-hidden="true"></span>
             <span class="them"><small>${escapeHtml(opponentsLabel())}</small><strong>${them}</strong></span>
@@ -873,7 +897,7 @@ export function mount(root: HTMLElement): void {
               ${dockHtml(game)}
             </div>
             ${yourBidRow(game, me)}
-            <div class="your-hand" aria-label="Your hand">
+            <div class="your-hand ${spotClass("hand")}" data-spot="hand" aria-label="Your hand">
               ${yourHandHtml(game)}
             </div>
           </section>
@@ -912,7 +936,7 @@ export function mount(root: HTMLElement): void {
       )
       .join("");
     return `
-      <div class="seat seat-${place} ${active ? "active" : ""} ${reveal ? "open" : ""} ${teamOf(seat) === teamOf(me) ? "team-us" : "team-them"}">
+      <div class="seat seat-${place} ${active ? "active" : ""} ${reveal ? "open" : ""} ${teamOf(seat) === teamOf(me) ? "team-us" : "team-them"} ${spotClass(place === "north" ? "partner" : "opponents")}" data-spot="${place === "north" ? "partner" : "opponents"}">
         <div class="seat-stack">
           <div class="seat-tiles">${tiles}</div>
           ${bidChip(game, seat)}
@@ -980,14 +1004,14 @@ export function mount(root: HTMLElement): void {
           return `<button type="button" class="${cls}" data-act="bid" data-amount="${amount}">${label}</button>`;
         })
         .join("");
-      return `<div class="bids" aria-label="Your bid">${buttons}</div>`;
+      return `<div class="bids ${spotClass("bids")}" data-spot="bids" aria-label="Your bid">${buttons}</div>`;
     }
     if (game.phase === "trump" && game.turn === me) {
       const buttons = TRUMP_BUTTONS.map(
         (item) =>
           `<button type="button" class="trump" data-act="trump" data-trump="${trumpKey(item.trump)}"><strong>${item.label}</strong><small>${item.hint}</small></button>`,
       ).join("");
-      return `<div class="trumps" aria-label="Name trump">${buttons}</div>`;
+      return `<div class="trumps ${spotClass("trumps")}" data-spot="trumps" aria-label="Name trump">${buttons}</div>`;
     }
     if (game.phase === "playing" && game.turn === me && selectedKey && legalKeys(game).has(selectedKey)) {
       return `<div class="play-row"><p class="dock-note">${escapeHtml(yourPlayLine(game, me))}</p><button type="button" class="primary play-go" data-act="play">Play ${selectedKey}</button></div>`;
@@ -1008,7 +1032,7 @@ export function mount(root: HTMLElement): void {
     const ours = game.completedTricks.filter((trick) => teamOf(trick.winner) === mine);
     const theirs = game.completedTricks.filter((trick) => teamOf(trick.winner) !== mine);
     return `
-      <div class="trick-board">
+      <div class="trick-board ${spotClass("tricks")}" data-spot="tricks">
         <section class="won theirs">
           <header>
             <h2>${escapeHtml(opponentsLabel())}</h2>
@@ -1047,7 +1071,7 @@ export function mount(root: HTMLElement): void {
 
   function trumpBadgeHtml(game: GameState): string {
     if (!game.trump) {
-      return `<aside class="trump-badge waiting" aria-label="Trump"><p class="trump-kicker">Trump</p><strong>Not named</strong></aside>`;
+      return `<aside class="trump-badge waiting ${spotClass("trump")}" data-spot="trump" aria-label="Trump"><p class="trump-kicker">Trump</p><strong>Not named</strong></aside>`;
     }
     const label = game.trump.kind === "followMe" ? "No Trump" : trumpName(game.trump);
     const icon =
@@ -1056,24 +1080,28 @@ export function mount(root: HTMLElement): void {
         : game.trump.kind === "suit"
           ? boneHtml({ hi: game.trump.suit, lo: game.trump.suit }, { size: "sm", trump: game.trump })
           : "";
-    return `<aside class="trump-badge" aria-live="polite" aria-label="Trump is ${label}"><p class="trump-kicker">Trump</p><strong>${escapeHtml(label)}</strong>${icon}</aside>`;
+    return `<aside class="trump-badge ${spotClass("trump")}" data-spot="trump" aria-live="polite" aria-label="Trump is ${label}"><p class="trump-kicker">Trump</p><strong>${escapeHtml(label)}</strong>${icon}</aside>`;
   }
 
   function coachHtml(): string {
     if (!lesson) return "";
+    const guide = lesson.def.guide[lesson.guide];
     const beat = lesson.def.beats[lesson.beat];
-    const say = beat ? (beat.kind === "you" ? beat.say : "Watch the table.") : lesson.def.done;
-    const next = beat
-      ? ""
-      : `<div class="menu-actions">
+    const say = guide ? guide.say : beat ? (beat.kind === "you" ? beat.say : "Watch the table.") : lesson.def.done;
+    const spot = guide ? guide.spot : beat?.kind === "you" && beat.spot ? beat.spot : beat ? "watch" : "done";
+    const next = guide
+      ? `<button type="button" class="primary" data-act="guide-next">Next</button>`
+      : beat
+        ? ""
+        : `<div class="menu-actions">
           <button type="button" class="primary" data-act="lesson" data-lesson="follow">Follow suit</button>
           <button type="button" class="ghost" data-act="lesson" data-lesson="count">Count the points</button>
         </div>`;
     return `
-      <section class="coach" aria-live="polite">
+      <section class="coach coach-spot-${spot}" aria-live="polite">
         <p class="coach-kicker">${escapeHtml(lesson.def.title)}</p>
         <p>${escapeHtml(say)}</p>
-        ${alertText ? `<p class="coach-hint">${escapeHtml(alertText)}</p>` : ""}
+        ${alertText && !guide ? `<p class="coach-hint">${escapeHtml(alertText)}</p>` : ""}
         ${next}
       </section>`;
   }

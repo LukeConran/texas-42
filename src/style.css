@@ -267,21 +267,124 @@ h1, h2, h3, .brand, .scoreline strong, .result-card h2 {
 .bone.marked { box-shadow: 0 0 0 3px var(--gold); }
 .your-hand .bone.marked { transform: translateY(-12px); }
 .coach {
-  margin: 8px 18px 0;
-  background: #2a211b;
-  border: 1px solid rgba(230, 194, 122, 0.45);
+  position: fixed;
+  z-index: 25;
+  width: min(340px, calc(100vw - 24px));
+  background: var(--ivory);
+  color: var(--ink);
+  font-size: 1.12rem;
+  line-height: 1.35;
   border-radius: 16px;
-  padding: 12px 16px;
+  padding: 14px 16px 16px;
+  box-shadow: var(--shadow);
+  border: 1px solid var(--gold);
 }
 .coach-kicker {
   margin: 0;
-  color: var(--gold);
+  color: var(--gold-deep);
   font-size: 0.75rem;
   letter-spacing: 0.08em;
   text-transform: uppercase;
 }
-.coach p { margin: 4px 0 0; }
-.coach-hint { color: var(--clay); }
+.coach p { margin: 8px 0 0; }
+.coach .primary { margin-top: 12px; }
+.coach .ghost {
+  color: var(--ink);
+  border-color: rgba(28, 24, 20, 0.35);
+}
+.coach .menu-actions { margin-top: 12px; }
+.coach-hint { color: #8a3b24; }
+.coach::after {
+  content: "";
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  background: var(--ivory);
+  border-right: 1px solid var(--gold);
+  border-bottom: 1px solid var(--gold);
+}
+.coach-spot-marks,
+.coach-spot-watch {
+  top: 86px;
+  left: 50%;
+  transform: translateX(-50%);
+}
+.coach-spot-marks::after,
+.coach-spot-watch::after {
+  top: -8px;
+  left: calc(50% - 7px);
+  transform: rotate(-135deg);
+}
+.coach-spot-partner {
+  top: 168px;
+  left: 50%;
+  transform: translateX(-50%);
+}
+.coach-spot-partner::after {
+  top: -8px;
+  left: calc(50% - 7px);
+  transform: rotate(-135deg);
+}
+.coach-spot-opponents {
+  top: 46%;
+  left: max(16px, calc(50% - 430px));
+}
+.coach-spot-opponents::after {
+  top: calc(50% - 7px);
+  right: -8px;
+  transform: rotate(-45deg);
+}
+.coach-spot-trump {
+  left: 18px;
+  bottom: 112px;
+}
+.coach-spot-trump::after {
+  bottom: -8px;
+  left: 28px;
+  transform: rotate(45deg);
+}
+.coach-spot-tricks {
+  top: 96px;
+  right: 18px;
+}
+.coach-spot-tricks::after {
+  top: 22px;
+  right: -8px;
+  transform: rotate(-45deg);
+}
+.coach-spot-hand {
+  left: 50%;
+  bottom: 168px;
+  transform: translateX(-50%);
+}
+.coach-spot-hand::after {
+  bottom: -8px;
+  left: calc(50% - 7px);
+  transform: rotate(45deg);
+}
+.coach-spot-bids,
+.coach-spot-trumps {
+  left: 50%;
+  bottom: 248px;
+  transform: translateX(-50%);
+}
+.coach-spot-bids::after,
+.coach-spot-trumps::after {
+  bottom: -8px;
+  left: calc(50% - 7px);
+  transform: rotate(45deg);
+}
+.coach-spot-done {
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+}
+.coach-spot-done::after { display: none; }
+[data-spot].lit {
+  outline: 3px solid var(--gold);
+  outline-offset: 4px;
+  border-radius: 16px;
+}
 .bone.locked { opacity: 0.5; pointer-events: none; }
 button.tile {
   padding: 0;
@@ -637,6 +740,16 @@ legend { margin-bottom: 8px; color: var(--gold); }
 }
 
 @media (max-width: 720px) {
+  .coach {
+    top: auto;
+    right: 12px;
+    bottom: 12px;
+    left: 12px;
+    width: auto;
+    transform: none;
+  }
+  .coach::after { display: none; }
+  .room:has(.coach) .play { padding-bottom: 230px; }
   .topbar { padding-inline: 12px; }
   .scoreline { order: 3; width: 100%; justify-content: center; }
   .bone-lg { width: 48px; height: 90px; }

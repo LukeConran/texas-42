@@ -3,11 +3,19 @@ import { dominoKey } from "../engine/domino";
 import type { Action } from "../engine/game";
 import { trumpKey } from "../engine/trump";
 
+export type LessonSpot = "partner" | "opponents" | "marks" | "trump" | "tricks" | "hand" | "bids" | "trumps";
+
+export interface LessonGuide {
+  spot: LessonSpot;
+  say: string;
+}
+
 export interface LessonBeatYou {
   kind: "you";
   action: Action;
   say: string;
   hint: string;
+  spot?: LessonSpot;
 }
 
 export interface LessonBeatAuto {
@@ -21,6 +29,7 @@ export interface Lesson {
   id: string;
   title: string;
   seed: number;
+  guide: LessonGuide[];
   beats: LessonBeat[];
   done: string;
 }
@@ -31,12 +40,39 @@ const LESSONS: Lesson[] = [
     title: "Follow suit",
     seed: 2,
     done: "You followed the five. A six is trump on this hand, so it does not follow a five. Any other tile with a five does.",
+    guide: [
+      {
+        spot: "marks",
+        say: "These pills are the match. Your team is on the left. First team to 7 marks wins.",
+      },
+      {
+        spot: "partner",
+        say: "North is your partner. You sit across from each other and you score together.",
+      },
+      {
+        spot: "opponents",
+        say: "West and East are the other team. They bid against you and try to set whatever you name.",
+      },
+      {
+        spot: "trump",
+        say: "Trump shows in this corner. It stays blank until the winning bidder names a suit.",
+      },
+      {
+        spot: "tricks",
+        say: "Won tricks stack in this column. Read them so you know which count tiles are already gone.",
+      },
+      {
+        spot: "hand",
+        say: "These seven tiles are yours for the hand. When it is your turn, the lesson rings the one to play.",
+      },
+    ],
     beats: [
       { kind: "auto", action: { type: "bid", amount: "pass" } },
       {
         kind: "you",
         action: { type: "bid", amount: 30 },
-        say: "East passed. Bid 30 so this lesson can name trump.",
+        spot: "bids",
+        say: "East passed. Bid 30. A low bid you can make is the habit: you name trump, and 30 of the 42 points is enough.",
         hint: "Bid 30. Passing deals again, and this lesson needs the hand in front of you.",
       },
       { kind: "auto", action: { type: "bid", amount: "pass" } },
@@ -44,12 +80,14 @@ const LESSONS: Lesson[] = [
       {
         kind: "you",
         action: { type: "declareTrump", trump: { kind: "suit", suit: 6 } },
-        say: "You won the bid. Name sixes.",
+        spot: "trumps",
+        say: "You won the bid. Name sixes. Naming trump is why you took the bid.",
         hint: "Name sixes. The next trick is about what follows a five when sixes are trump.",
       },
       {
         kind: "you",
         action: { type: "play", domino: tile("6-1") },
+        spot: "hand",
         say: "Lead the 6-1. In the usual game the opening lead may be any tile. The lesson is the trick after this one.",
         hint: "Lead the 6-1. It is the six with a one on the other end.",
       },
@@ -61,6 +99,7 @@ const LESSONS: Lesson[] = [
       {
         kind: "you",
         action: { type: "play", domino: tile("5-1") },
+        spot: "hand",
         say: "East led the 5-2. Sixes are trump, so your sixes do not follow a five. The bright tiles are the legal plays. Play the 5-1.",
         hint: "That tile is legal, but this lesson wants the 5-1. A six does not follow the five.",
       },
@@ -71,12 +110,27 @@ const LESSONS: Lesson[] = [
     title: "Count the points",
     seed: 3,
     done: "The double-five counts 10 and the 5-0 counts 5. The trick itself counts 1. That is 16. Every hand has 42 points: one for each of the seven tricks, plus the five count tiles.",
+    guide: [
+      {
+        spot: "marks",
+        say: "Marks live up here. A made bid under 42 is one mark. This lesson is about the points inside a hand, which always add to 42.",
+      },
+      {
+        spot: "tricks",
+        say: "After a trick, its points show in this column. The double-five counts 10, each of 5-0, 4-1, and 3-2 counts 5, the 6-4 counts 10, and every trick counts 1.",
+      },
+      {
+        spot: "hand",
+        say: "You will lead the double-five. It is worth 10 before anyone else plays.",
+      },
+    ],
     beats: [
       { kind: "auto", action: { type: "bid", amount: "pass" } },
       {
         kind: "you",
         action: { type: "bid", amount: 30 },
-        say: "Bid 30. You will lead a count tile, and the table will follow.",
+        spot: "bids",
+        say: "Bid 30 so you name trump and lead. A bid you can make is worth more than passing the hand away.",
         hint: "Bid 30 so you can name trump and lead.",
       },
       { kind: "auto", action: { type: "bid", amount: "pass" } },
@@ -84,12 +138,14 @@ const LESSONS: Lesson[] = [
       {
         kind: "you",
         action: { type: "declareTrump", trump: { kind: "suit", suit: 1 } },
+        spot: "trumps",
         say: "Name ones. The double-five has no one on it, so it stays a ten-count.",
         hint: "Name ones.",
       },
       {
         kind: "you",
         action: { type: "play", domino: tile("5-5") },
+        spot: "hand",
         say: "Lead the double-five. It counts 10. Any tile may lead, and the ringed one is the count this lesson is about.",
         hint: "Lead the double-five, the 5-5.",
       },
