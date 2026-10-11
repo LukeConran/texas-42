@@ -6,7 +6,6 @@ import {
   type GameState,
   type MatchSettings,
   type PlayerView,
-  type ScoringMode,
   apply,
   bidLabel,
   createMatch,
@@ -50,7 +49,7 @@ const TRUMP_BUTTONS: Array<{ trump: Trump; label: string; hint: string }> = [
 ];
 
 export function mount(root: HTMLElement): void {
-  let screen: "menu" | "lobby" | "table" = "menu";
+  let screen: "home" | "online" | "host" | "join" | "lobby" | "table" = "home";
   let role: "local" | "host" | "guest" = "local";
   let me: Seat = 0;
   let names: Names = [null, null, null, null];
@@ -60,9 +59,8 @@ export function mount(root: HTMLElement): void {
   let roomCode = "";
   let playerName = "";
   let joinCode = new URLSearchParams(location.search).get("room")?.toUpperCase() ?? "";
+  if (joinCode) screen = "join";
   let menuNote = "";
-  let scoringMode: ScoringMode = "marks";
-  let openingLeadMustBeTrump = false;
   let showHands = false;
   let soundOn = false;
   let pace: Pace = "normal";
@@ -98,15 +96,24 @@ export function mount(root: HTMLElement): void {
     if (!target || !root.contains(target)) return;
     const act = target.dataset.act;
     if (act === "chat-form") return;
-    if (act === "start") startMatch();
+    if (act === "online") {
+      menuNote = "";
+      screen = "online";
+    } else if (act === "offline") startMatch();
+    else if (act === "tutorial") startLesson("follow");
+    else if (act === "host-form") {
+      menuNote = "";
+      screen = "host";
+    } else if (act === "join-form") {
+      menuNote = "";
+      screen = "join";
+    } else if (act === "back") goBack();
     else if (act === "lesson") startLesson(target.dataset.lesson ?? "");
     else if (act === "host") void startHost();
     else if (act === "join") void startJoin();
     else if (act === "deal-online") startOnlineMatch();
     else if (act === "copy") void copyLink();
     else if (act === "menu") leaveTable();
-    else if (act === "mode") scoringMode = target.dataset.mode === "marks" ? "marks" : "points";
-    else if (act === "house") openingLeadMustBeTrump = !openingLeadMustBeTrump;
     else if (act === "rules") rulesOpen = !rulesOpen;
     else if (act === "close-rules") rulesOpen = false;
     else if (act === "hands" && role === "local") showHands = !showHands;
@@ -136,13 +143,7 @@ export function mount(root: HTMLElement): void {
     humans = new Set();
     showHands = false;
     endLesson();
-    const settings: MatchSettings = {
-      ...defaultSettings(),
-      scoringMode,
-      target: scoringMode === "marks" ? 7 : 250,
-      openingLeadMustBeTrump,
-    };
-    state = createMatch(settings);
+    state = createMatch(matchSettings());
     selectedKey = null;
     screen = "table";
     rulesOpen = false;
@@ -266,7 +267,6 @@ export function mount(root: HTMLElement): void {
     names = [null, null, null, null];
     humans = new Set();
     state = null;
-    screen = "menu";
     roomCode = "";
     menuNote = "";
     showHands = false;
@@ -276,6 +276,30 @@ export function mount(root: HTMLElement): void {
     endLesson();
     chat = [];
     chatDraft = "";
+    screen = "home";
+  }
+
+  function goBack(): void {
+    if (screen === "online") {
+      menuNote = "";
+      screen = "home";
+      return;
+    }
+    if (screen === "lobby" || connecting || hostLink || guestLink) {
+      netToken += 1;
+      connecting = false;
+      stopNet();
+      role = "local";
+      me = 0;
+      names = [null, null, null, null];
+      humans = new Set();
+      state = null;
+      roomCode = "";
+      chat = [];
+      chatDraft = "";
+    }
+    menuNote = "";
+    screen = "online";
   }
 
   function endLesson(): void {
@@ -294,12 +318,7 @@ export function mount(root: HTMLElement): void {
     humans = new Set();
     showHands = false;
     lesson = { def, beat: 0 };
-    state = createMatch({
-      ...defaultSettings(def.seed),
-      scoringMode: "marks",
-      target: 7,
-      openingLeadMustBeTrump: false,
-    });
+    state = createMatch(matchSettings(def.seed));
     selectedKey = null;
     alertText = "";
     screen = "table";
@@ -372,34 +391,43 @@ export function mount(root: HTMLElement): void {
   }
 
   let connecting = false;
+  let netToken = 0;
 
   async function startHost(): Promise<void> {
     if (connecting) return;
     connecting = true;
+    const token = (netToken += 1);
     role = "local";
     stopNet();
     me = 0;
     showHands = false;
     menuNote = "Opening a room…";
-    screen = "menu";
+    screen = "host";
     render();
     try {
       names = [cleanName(playerName) || null, null, null, null];
       humans = new Set<Seat>([0]);
       chat = [];
       chatDraft = "";
-      hostLink = await openHost(onGuestMessage, onGuestClose);
+      const opened = await openHost(onGuestMessage, onGuestClose);
+      if (token !== netToken) {
+        opened.close();
+        return;
+      }
+      hostLink = opened;
       role = "host";
       roomCode = hostLink.code;
       state = null;
       screen = "lobby";
       menuNote = "";
     } catch (error) {
+      if (token !== netToken) return;
       stopNet();
       role = "local";
-      screen = "menu";
+      screen = "host";
       menuNote = error instanceof Error ? error.message : "Could not open a room.";
     } finally {
+      if (token !== netToken) return;
       connecting = false;
       render();
     }
@@ -452,32 +480,42 @@ export function mount(root: HTMLElement): void {
     const code = joinCode.trim().toUpperCase();
     if (code.length < 4) {
       menuNote = "Enter the four-letter room code.";
+      screen = "join";
       render();
       return;
     }
     connecting = true;
+    const token = (netToken += 1);
     stopNet();
+    role = "guest";
+    me = 0;
+    chat = [];
+    chatDraft = "";
     showHands = false;
     menuNote = "Joining the room…";
-    screen = "menu";
+    screen = "join";
     render();
     try {
-      role = "guest";
-      me = 0;
-      chat = [];
-      chatDraft = "";
-      guestLink = await openGuest(code, cleanName(playerName), onHostMessage, onHostClosed);
+      const opened = await openGuest(code, cleanName(playerName), onHostMessage, onHostClosed);
+      if (token !== netToken) {
+        opened.close();
+        role = "local";
+        return;
+      }
+      guestLink = opened;
       roomCode = code;
       if (!state) {
         screen = "lobby";
         menuNote = "Connected. Waiting for the host to deal.";
       }
     } catch (error) {
+      if (token !== netToken) return;
       stopNet();
       role = "local";
-      screen = "menu";
+      screen = "join";
       menuNote = error instanceof Error ? error.message : "Could not join that room.";
     } finally {
+      if (token !== netToken) return;
       connecting = false;
       render();
     }
@@ -507,7 +545,7 @@ export function mount(root: HTMLElement): void {
     role = "local";
     me = 0;
     state = null;
-    screen = "menu";
+    screen = "home";
     showHands = false;
     chat = [];
     chatDraft = "";
@@ -546,13 +584,7 @@ export function mount(root: HTMLElement): void {
 
   function startOnlineMatch(): void {
     if (role !== "host") return;
-    const settings: MatchSettings = {
-      ...defaultSettings(),
-      scoringMode,
-      target: scoringMode === "marks" ? 7 : 250,
-      openingLeadMustBeTrump,
-    };
-    state = createMatch(settings);
+    state = createMatch(matchSettings());
     selectedKey = null;
     alertText = "";
     showHands = false;
@@ -596,7 +628,10 @@ export function mount(root: HTMLElement): void {
     const caret = chatFocused ? active.selectionStart : null;
     if (screen === "table" && state) root.innerHTML = tableHtml(state);
     else if (screen === "lobby") root.innerHTML = lobbyHtml();
-    else root.innerHTML = menuHtml();
+    else if (screen === "online") root.innerHTML = onlineHtml();
+    else if (screen === "host") root.innerHTML = hostFormHtml();
+    else if (screen === "join") root.innerHTML = joinFormHtml();
+    else root.innerHTML = homeHtml();
     const log = root.querySelector<HTMLElement>(".chat-log");
     if (log) log.scrollTop = log.scrollHeight;
     if (!chatFocused) return;
@@ -607,59 +642,71 @@ export function mount(root: HTMLElement): void {
     field.setSelectionRange(pos, pos);
   }
 
-  function menuHtml(): string {
+  function homeHtml(): string {
     return `
       <div class="room menu-room">
-        <header class="topbar">
-          <p class="brand">Texas 42</p>
-          <p class="brand-sub">Official state domino game</p>
-        </header>
+        <main class="front">
+          <h1 class="front-title">Texas 42</h1>
+          <div class="front-actions">
+            <button type="button" class="primary" data-act="online">Play Online</button>
+            <button type="button" class="primary" data-act="offline">Play Offline</button>
+            <button type="button" class="primary" data-act="tutorial">Tutorial</button>
+          </div>
+          ${menuNote ? `<p class="fine">${escapeHtml(menuNote)}</p>` : ""}
+        </main>
+      </div>`;
+  }
+
+  function onlineHtml(): string {
+    return cardPage(
+      "Play online",
+      `<div class="front-actions">
+        <button type="button" class="primary" data-act="host-form">Host a Room</button>
+        <button type="button" class="primary" data-act="join-form">Join a Room</button>
+        <button type="button" class="ghost" data-act="back">Back</button>
+      </div>`,
+    );
+  }
+
+  function hostFormHtml(): string {
+    return cardPage(
+      "Host a room",
+      `<label class="field">Your name
+        <input data-field="name" maxlength="16" value="${escapeHtml(playerName)}" autocomplete="nickname" />
+      </label>
+      <div class="front-actions">
+        <button type="button" class="primary" data-act="host">Host</button>
+        <button type="button" class="ghost" data-act="back">Back</button>
+      </div>
+      ${menuNote ? `<p class="fine">${escapeHtml(menuNote)}</p>` : ""}`,
+    );
+  }
+
+  function joinFormHtml(): string {
+    return cardPage(
+      "Join a room",
+      `<label class="field">Your name
+        <input data-field="name" maxlength="16" value="${escapeHtml(playerName)}" autocomplete="nickname" />
+      </label>
+      <label class="field">Room code
+        <input data-field="code" maxlength="4" value="${escapeHtml(joinCode)}" autocapitalize="characters" spellcheck="false" />
+      </label>
+      <div class="front-actions">
+        <button type="button" class="primary" data-act="join">Join</button>
+        <button type="button" class="ghost" data-act="back">Back</button>
+      </div>
+      ${menuNote ? `<p class="fine">${escapeHtml(menuNote)}</p>` : ""}`,
+    );
+  }
+
+  function cardPage(title: string, body: string): string {
+    return `
+      <div class="room menu-room">
         <main class="menu-layout">
           <section class="menu-card">
-            <h1>Sit down. Seven tiles. Forty-two points.</h1>
-            <p class="lede">You play South, with a partner across the table. West and East bid and play against you. The tiles never form a chain. This is a trick-taking game, closer to pitch or spades than to draw dominoes.</p>
-            <fieldset>
-              <legend>Match</legend>
-              <div class="choice-row">
-                ${choice("mode", "marks", "Marks to 7", scoringMode === "marks")}
-                ${choice("mode", "points", "Points to 250", scoringMode === "points")}
-              </div>
-            </fieldset>
-            <button type="button" class="check ${openingLeadMustBeTrump ? "on" : ""}" data-act="house">
-              <span class="box" aria-hidden="true"></span>
-              Opening lead must be a trump
-            </button>
-            <p class="fine">Leave that off for the usual game. The high bidder names trump, then may lead anything. Turn it on for the older house rule that the first tile has to be trump.</p>
-            <div class="menu-actions">
-              <button type="button" class="primary" data-act="start">Deal the first hand</button>
-              <button type="button" class="ghost" data-act="rules">${rulesOpen ? "Hide the rules" : "How to play"}</button>
-            </div>
-            <fieldset>
-              <legend>Practice</legend>
-              <p class="fine">A marked hand on this same table. The bright tiles are legal. The lesson waits until you play the one it asks for.</p>
-              <div class="menu-actions">
-                <button type="button" class="ghost" data-act="lesson" data-lesson="follow">Follow suit</button>
-                <button type="button" class="ghost" data-act="lesson" data-lesson="count">Count the points</button>
-              </div>
-            </fieldset>
-            <fieldset>
-              <legend>With friends</legend>
-              <label class="field">Your name
-                <input data-field="name" maxlength="16" value="${escapeHtml(playerName)}" autocomplete="nickname" />
-              </label>
-              <div class="menu-actions">
-                <button type="button" class="primary" data-act="host">Host a room</button>
-              </div>
-              <label class="field">Room code
-                <input data-field="code" maxlength="4" value="${escapeHtml(joinCode)}" autocapitalize="characters" spellcheck="false" />
-              </label>
-              <div class="menu-actions">
-                <button type="button" class="ghost" data-act="join">Join with code</button>
-              </div>
-              ${menuNote ? `<p class="fine">${escapeHtml(menuNote)}</p>` : ""}
-            </fieldset>
+            <h1>${title}</h1>
+            ${body}
           </section>
-          ${rulesOpen ? `<section class="rules-card">${RULES_HTML}</section>` : ""}
         </main>
       </div>`;
   }
@@ -699,7 +746,7 @@ export function mount(root: HTMLElement): void {
             ${hostControls}
             ${chatHtml()}
             <div class="menu-actions">
-              <button type="button" class="ghost" data-act="menu">Leave</button>
+              <button type="button" class="ghost" data-act="back">Back</button>
             </div>
           </section>
         </main>
@@ -1045,8 +1092,13 @@ export function mount(root: HTMLElement): void {
   }
 }
 
-function choice(act: string, mode: string, label: string, on: boolean): string {
-  return `<button type="button" class="choice ${on ? "on" : ""}" data-act="${act}" data-mode="${mode}" aria-pressed="${on}">${label}</button>`;
+function matchSettings(seed?: number): MatchSettings {
+  return {
+    ...defaultSettings(seed),
+    scoringMode: "marks",
+    target: 7,
+    openingLeadMustBeTrump: false,
+  };
 }
 
 function bidChip(game: GameState, seat: Seat): string {
