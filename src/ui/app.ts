@@ -1,4 +1,4 @@
-import { BOT_STYLES, chooseAction } from "../ai/heuristic";
+import { chooseBotAction, type BotLevel } from "../ai/levels";
 import type { Domino, Seat } from "../engine/domino";
 import { dominoKey, dominoLabel, partnerOf, seatPlace, teamOf } from "../engine/domino";
 import {
@@ -77,6 +77,7 @@ export function mount(root: HTMLElement): void {
   let showHands = false;
   let soundOn = false;
   let pace: Pace = "normal";
+  let botLevel: BotLevel = "medium";
   let rulesOpen = false;
   let placed = false;
   let state: GameState | null = null;
@@ -142,6 +143,10 @@ export function mount(root: HTMLElement): void {
     else if (act === "hands" && role === "local") showHands = !showHands;
     else if (act === "sound") soundOn = !soundOn;
     else if (act === "pace") pace = (target.dataset.pace as Pace) || "normal";
+    else if (act === "bots") {
+      const next = target.dataset.level;
+      if (next === "easy" || next === "medium" || next === "hard") botLevel = next;
+    }
     else if (act === "bid") onBid(target.dataset.amount === "pass" ? "pass" : Number(target.dataset.amount));
     else if (act === "trump") onTrump(target.dataset.trump ?? "");
     else if (act === "select") onSelect(target.dataset.key ?? "");
@@ -266,7 +271,7 @@ export function mount(root: HTMLElement): void {
       const thinking = state;
       timer = window.setTimeout(() => {
         if (state !== thinking || state.turn !== seat) return;
-        const action = chooseAction(observe(state, seat), BOT_STYLES[seat === 0 ? 1 : seat]);
+        const action = chooseBotAction(observe(state, seat), botLevel);
         if (action.type === "play") blip(360, 0.03);
         commit(action);
       }, delays.think);
@@ -792,6 +797,8 @@ export function mount(root: HTMLElement): void {
         ? `<p class="room-code">${escapeHtml(roomCode)}</p>
            <p class="fine">Share the code or link below. Partners sit across: South with North, West with East. Put two people across from each other to partner them, or side by side to oppose them. An empty seat is a bot. Seats stay put once the first hand is dealt. Keep this tab open for the whole match.</p>
            <p class="fine room-link">${escapeHtml(roomLink())}</p>
+           <p class="fine">Empty seats</p>
+           <div class="choice-row">${botButtons()}</div>
            <div class="menu-actions">
              <button type="button" class="primary" data-act="deal-online">Deal the first hand</button>
              <button type="button" class="secondary" data-act="copy">Copy link</button>
@@ -841,6 +848,7 @@ export function mount(root: HTMLElement): void {
             <span class="them"><small>${escapeHtml(opponentsLabel())}</small><strong>${them}</strong></span>
           </div>
           <div class="tools">
+            ${role === "guest" || lesson ? "" : botButtons()}
             ${role === "guest" ? "" : paceButtons()}
             ${handsButton}
             <button type="button" class="tool ${soundOn ? "on" : ""}" data-act="sound">${soundOn ? "Sound on" : "Sound off"}</button>
@@ -886,6 +894,16 @@ export function mount(root: HTMLElement): void {
         ${overlayHtml(game)}
         ${rulesOpen ? `<div class="rules-pop" role="dialog" aria-label="Rules"><button type="button" class="tool close-rules" data-act="close-rules">Close</button>${RULES_HTML}</div>` : ""}
       </div>`;
+  }
+
+  function botButtons(): string {
+    const labels: Record<BotLevel, string> = { easy: "Easy", medium: "Medium", hard: "Hard" };
+    return (Object.keys(labels) as BotLevel[])
+      .map(
+        (level) =>
+          `<button type="button" class="tool ${botLevel === level ? "on" : ""}" data-act="bots" data-level="${level}">${labels[level]}</button>`,
+      )
+      .join("");
   }
 
   function paceButtons(): string {
