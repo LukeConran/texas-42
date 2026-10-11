@@ -1,6 +1,6 @@
 import { BOT_STYLES, chooseAction } from "../ai/heuristic";
 import type { Domino, Seat } from "../engine/domino";
-import { dominoKey, dominoLabel, seatPlace, teamOf } from "../engine/domino";
+import { dominoKey, dominoLabel, partnerOf, seatPlace, teamOf } from "../engine/domino";
 import {
   type Action,
   type GameState,
@@ -13,7 +13,8 @@ import {
   observe,
   scoreUnit,
 } from "../engine/game";
-import { chatSpeaker, chatText, type NetMessage } from "../net/messages";
+import { chatSpeaker, chatText, isSeat, type NetMessage } from "../net/messages";
+import { guestSeats } from "../net/seats";
 import { openGuest, openHost, type GuestLink, type HostLink } from "../net/session";
 import { trumpKey, trumpName, type Trump } from "../engine/trump";
 import { boneHtml, sortHand } from "./dominoView";
@@ -77,6 +78,7 @@ export function mount(root: HTMLElement): void {
   let soundOn = false;
   let pace: Pace = "normal";
   let rulesOpen = false;
+  let placed = false;
   let state: GameState | null = null;
   let lesson: { def: Lesson; beat: number } | null = null;
   let lessonToken = 0;
@@ -103,11 +105,20 @@ export function mount(root: HTMLElement): void {
     sendChat(field?.value ?? "");
   });
 
+  root.addEventListener("change", (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLSelectElement) || target.dataset.act !== "seat") return;
+    const from = Number(target.dataset.from);
+    const to = Number(target.value);
+    if (!isSeat(from) || !isSeat(to)) return;
+    moveSeat(from, to);
+  });
+
   root.addEventListener("click", (event) => {
     const target = (event.target as HTMLElement | null)?.closest<HTMLElement>("[data-act]");
     if (!target || !root.contains(target)) return;
     const act = target.dataset.act;
-    if (act === "chat-form") return;
+    if (act === "seat" || act === "chat-form") return;
     if (act === "online") {
       menuNote = "";
       screen = "online";
@@ -288,6 +299,7 @@ export function mount(root: HTMLElement): void {
     endLesson();
     chat = [];
     chatDraft = "";
+    placed = false;
     screen = "home";
   }
 
@@ -309,6 +321,7 @@ export function mount(root: HTMLElement): void {
       roomCode = "";
       chat = [];
       chatDraft = "";
+      placed = false;
     }
     menuNote = "";
     screen = "online";
@@ -390,8 +403,7 @@ export function mount(root: HTMLElement): void {
 
   function broadcast(): void {
     if (role !== "host" || !state || !hostLink) return;
-    for (const seat of [1, 2, 3] as Seat[]) {
-      if (!humans.has(seat)) continue;
+    for (const seat of guestSeats(me, humans)) {
       const view = observe(state, seat);
       hostLink.send(seat, {
         type: "sync",
@@ -461,6 +473,7 @@ export function mount(root: HTMLElement): void {
       names = next;
       humans.add(seat);
       if (state) broadcast();
+      else tellSeats();
       render();
       return;
     }
@@ -483,8 +496,42 @@ export function mount(root: HTMLElement): void {
     if (state) {
       broadcast();
       queue();
-    }
+    } else tellSeats();
     render();
+  }
+
+  function moveSeat(from: Seat, to: Seat): void {
+    if (role !== "host" || !hostLink || state || from === to) return;
+    hostLink.swap(from, to);
+    const nextNames = [...names] as Names;
+    const held = nextNames[from] ?? null;
+    nextNames[from] = nextNames[to] ?? null;
+    nextNames[to] = held;
+    names = nextNames;
+    const nextHumans = new Set(humans);
+    const fromHuman = humans.has(from);
+    const toHuman = humans.has(to);
+    if (fromHuman !== toHuman) {
+      if (fromHuman) {
+        nextHumans.delete(from);
+        nextHumans.add(to);
+      } else {
+        nextHumans.delete(to);
+        nextHumans.add(from);
+      }
+    }
+    humans = nextHumans;
+    if (me === from) me = to;
+    else if (me === to) me = from;
+    tellSeats();
+    render();
+  }
+
+  function tellSeats(): void {
+    if (role !== "host" || !hostLink || state) return;
+    for (const seat of guestSeats(me, humans)) {
+      hostLink.send(seat, { type: "seated", seat, names: [...names] });
+    }
   }
 
   async function startJoin(): Promise<void> {
@@ -508,6 +555,7 @@ export function mount(root: HTMLElement): void {
     screen = "join";
     render();
     try {
+      placed = false;
       const opened = await openGuest(code, cleanName(playerName), onHostMessage, onHostClosed);
       if (token !== netToken) {
         opened.close();
@@ -535,6 +583,14 @@ export function mount(root: HTMLElement): void {
 
   function onHostMessage(message: NetMessage): void {
     if (role !== "guest") return;
+    if (message.type === "seated") {
+      if (state || !isSeat(message.seat)) return;
+      me = message.seat;
+      names = [message.names[0] ?? null, message.names[1] ?? null, message.names[2] ?? null, message.names[3] ?? null];
+      placed = true;
+      render();
+      return;
+    }
     if (message.type === "chat") {
       const text = chatText(message.text);
       if (!text) return;
@@ -559,6 +615,7 @@ export function mount(root: HTMLElement): void {
     state = null;
     screen = "home";
     showHands = false;
+    placed = false;
     chat = [];
     chatDraft = "";
     menuNote = "The host closed the room.";
@@ -583,8 +640,8 @@ export function mount(root: HTMLElement): void {
 
   function relayChat(from: string, text: string, except: Seat | null): void {
     if (!hostLink) return;
-    for (const seat of [1, 2, 3] as Seat[]) {
-      if (seat === except || !humans.has(seat)) continue;
+    for (const seat of guestSeats(me, humans)) {
+      if (seat === except) continue;
       hostLink.send(seat, { type: "chat", text, from });
     }
   }
@@ -730,30 +787,18 @@ export function mount(root: HTMLElement): void {
   }
 
   function lobbyHtml(): string {
-    const seats = ([0, 1, 2, 3] as Seat[])
-      .map((seat) => {
-        const host = seat === 0;
-        const joined = host || humans.has(seat);
-        const label = host
-          ? `${names[0] ? escapeHtml(names[0]) : "You"} · host`
-          : joined
-            ? `${escapeHtml(seatWord(seat, 0, names))} · joined`
-            : `${escapeHtml(seatWord(seat, 0, names))} · open seat, bot for now`;
-        return `<li class="${joined ? "joined" : "open"}"><span class="seat-dot" aria-hidden="true"></span>${label}</li>`;
-      })
-      .join("");
     const hostControls =
       role === "host"
         ? `<p class="room-code">${escapeHtml(roomCode)}</p>
-           <p class="fine">Share the code or link below. Seats fill left, across, then right of you. Empty seats play as bots. Keep this tab open for the whole match.</p>
+           <p class="fine">Share the code or link below. Partners sit across: South with North, West with East. Put two people across from each other to partner them, or side by side to oppose them. An empty seat is a bot. Seats stay put once the first hand is dealt. Keep this tab open for the whole match.</p>
            <p class="fine room-link">${escapeHtml(roomLink())}</p>
            <div class="menu-actions">
-             <button type="button" class="primary" data-act="deal-online">Fill empty seats and deal</button>
+             <button type="button" class="primary" data-act="deal-online">Deal the first hand</button>
              <button type="button" class="secondary" data-act="copy">Copy link</button>
            </div>
            ${menuNote ? `<p class="fine">${escapeHtml(menuNote)}</p>` : ""}
-           <ul class="lobby-seats">${seats}</ul>`
-        : `<p class="lede">${escapeHtml(menuNote || "Waiting for the host to deal.")}</p>
+           ${seatPicker()}`
+        : `<p class="lede">${escapeHtml(placed ? guestPlaceLine() : menuNote || "Waiting for the host to deal.")}</p>
            <p class="room-code">${escapeHtml(roomCode)}</p>`;
     return `
       <div class="room menu-room">
@@ -827,7 +872,7 @@ export function mount(root: HTMLElement): void {
             <div class="dock">
               ${dockHtml(game)}
             </div>
-            ${yourBidRow(game)}
+            ${yourBidRow(game, me)}
             <div class="your-hand" aria-label="Your hand">
               ${yourHandHtml(game)}
             </div>
@@ -1071,6 +1116,35 @@ export function mount(root: HTMLElement): void {
   }
 
 
+  function seatPicker(): string {
+    const rows = ([0, 1, 2, 3] as Seat[])
+      .map((seat) => {
+        const options = ([0, 1, 2, 3] as Seat[])
+          .map((other) => {
+            const who = personAt(other);
+            const selected = other === seat ? "selected" : "";
+            return `<option value="${other}" ${selected}>${escapeHtml(who)} · ${seatTitle(other)}</option>`;
+          })
+          .join("");
+        return `<label class="field">${seatTitle(seat)} · with ${seatTitle(partnerOf(seat))}
+          <select data-act="seat" data-from="${seat}" aria-label="Who sits ${seatTitle(seat)}">${options}</select>
+        </label>`;
+      })
+      .join("");
+    return `<div class="seat-picker">${rows}</div>`;
+  }
+
+  function guestPlaceLine(): string {
+    const partner = names[partnerOf(me)] || "a bot";
+    return `You are sitting ${seatTitle(me)}. Your partner is ${partner}.`;
+  }
+
+  function personAt(seat: Seat): string {
+    if (seat === me) return names[seat] ? `${names[seat]} (you)` : "You";
+    if (humans.has(seat)) return names[seat] || "Friend";
+    return "Bot";
+  }
+
   function chatHtml(): string {
     if (role !== "host" && role !== "guest") return "";
     const lines = chat
@@ -1111,6 +1185,10 @@ export function mount(root: HTMLElement): void {
   }
 }
 
+function seatTitle(seat: Seat): string {
+  return (["South", "West", "North", "East"] as const)[seat];
+}
+
 function matchSettings(seed?: number): MatchSettings {
   return {
     ...defaultSettings(seed),
@@ -1128,8 +1206,8 @@ function bidChip(game: GameState, seat: Seat): string {
   return `<p class="bid-chip">${bid.amount}</p>`;
 }
 
-function yourBidRow(game: GameState): string {
-  const chip = bidChip(game, 0);
+function yourBidRow(game: GameState, viewer: Seat): string {
+  const chip = bidChip(game, viewer);
   return chip ? `<div class="your-bid">${chip}</div>` : "";
 }
 
