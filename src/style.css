@@ -264,7 +264,24 @@ h1, h2, h3, .brand, .scoreline strong, .result-card h2 {
   padding: 0 3px;
 }
 .bone.is-trump { box-shadow: 0 0 0 2px var(--gold), 0 8px 14px rgba(0, 0, 0, 0.28); }
-.bone.marked { box-shadow: 0 0 0 2px var(--gold); }
+.bone.marked { box-shadow: 0 0 0 3px var(--gold); }
+.your-hand .bone.marked { transform: translateY(-12px); }
+.coach {
+  margin: 8px 18px 0;
+  background: #2a211b;
+  border: 1px solid rgba(230, 194, 122, 0.45);
+  border-radius: 16px;
+  padding: 12px 16px;
+}
+.coach-kicker {
+  margin: 0;
+  color: var(--gold);
+  font-size: 0.75rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.coach p { margin: 4px 0 0; }
+.coach-hint { color: var(--clay); }
 .bone.locked { opacity: 0.5; pointer-events: none; }
 button.tile {
   padding: 0;
