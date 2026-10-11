@@ -62,7 +62,7 @@ const TRUMP_BUTTONS: Array<{ trump: Trump; label: string; hint: string }> = [
 ];
 
 export function mount(root: HTMLElement): void {
-  let screen: "home" | "online" | "host" | "join" | "lobby" | "table" = "home";
+  let screen: "home" | "online" | "offline" | "host" | "join" | "lobby" | "table" = "home";
   let role: "local" | "host" | "guest" = "local";
   let me: Seat = 0;
   let names: Names = [null, null, null, null];
@@ -77,6 +77,7 @@ export function mount(root: HTMLElement): void {
   let showHands = false;
   let soundOn = false;
   let pace: Pace = "normal";
+  let botLevel: "easy" | "medium" | "hard" = "medium";
   let rulesOpen = false;
   let placed = false;
   let state: GameState | null = null;
@@ -122,7 +123,14 @@ export function mount(root: HTMLElement): void {
     if (act === "online") {
       menuNote = "";
       screen = "online";
-    } else if (act === "offline") startMatch();
+    } else if (act === "offline") {
+      menuNote = "";
+      screen = "offline";
+    } else if (act === "deal-offline") startMatch();
+    else if (act === "bots") {
+      const next = target.dataset.level;
+      if (next === "easy" || next === "medium" || next === "hard") botLevel = next;
+    }
     else if (act === "tutorial") startLesson("follow");
     else if (act === "host-form") {
       menuNote = "";
@@ -266,7 +274,9 @@ export function mount(root: HTMLElement): void {
       const thinking = state;
       timer = window.setTimeout(() => {
         if (state !== thinking || state.turn !== seat) return;
-        const action = chooseAction(observe(state, seat), BOT_STYLES[seat === 0 ? 1 : seat]);
+        const style = BOT_STYLES[seat === 0 ? 1 : seat];
+        const margin = botLevel === "easy" ? style.margin + 12 : botLevel === "hard" ? style.margin - 5 : style.margin;
+        const action = chooseAction(observe(state, seat), { margin });
         if (action.type === "play") blip(360, 0.03);
         commit(action);
       }, delays.think);
@@ -304,7 +314,7 @@ export function mount(root: HTMLElement): void {
   }
 
   function goBack(): void {
-    if (screen === "online") {
+    if (screen === "online" || screen === "offline") {
       menuNote = "";
       screen = "home";
       return;
@@ -698,6 +708,7 @@ export function mount(root: HTMLElement): void {
     if (screen === "table" && state) root.innerHTML = tableHtml(state);
     else if (screen === "lobby") root.innerHTML = lobbyHtml();
     else if (screen === "online") root.innerHTML = onlineHtml();
+    else if (screen === "offline") root.innerHTML = offlineHtml();
     else if (screen === "host") root.innerHTML = hostFormHtml();
     else if (screen === "join") root.innerHTML = joinFormHtml();
     else root.innerHTML = homeHtml();
@@ -726,6 +737,24 @@ export function mount(root: HTMLElement): void {
           ${menuNote ? `<p class="fine">${escapeHtml(menuNote)}</p>` : ""}
         </main>
       </div>`;
+  }
+
+  function offlineHtml(): string {
+    const choice = (level: "easy" | "medium" | "hard", label: string) =>
+      `<button type="button" class="choice ${botLevel === level ? "on" : ""}" data-act="bots" data-level="${level}" aria-pressed="${botLevel === level}">${label}</button>`;
+    return cardPage(
+      "Play offline",
+      "Choose how hard the other three chairs play, then deal. Medium is the usual bot.",
+      `<div class="choice-row">
+        ${choice("easy", "Easy")}
+        ${choice("medium", "Medium")}
+        ${choice("hard", "Hard")}
+      </div>
+      <div class="front-actions">
+        <button type="button" class="primary" data-act="deal-offline">Deal</button>
+      </div>
+      <button type="button" class="link-action" data-act="back">Back</button>`,
+    );
   }
 
   function onlineHtml(): string {
@@ -833,7 +862,7 @@ export function mount(root: HTMLElement): void {
         <header class="topbar">
           <div class="brand-block">
             <p class="brand">Texas 42</p>
-            <p class="brand-sub">Hand ${game.handNumber} · first to ${target} ${matchUnit}</p>
+            <p class="brand-sub">Hand ${game.handNumber} · first to ${target} ${matchUnit}${role === "local" && !lesson ? ` · ${botLevel} bots` : ""}</p>
           </div>
           <div class="scoreline" aria-label="Match score">
             <span class="us"><small>You &amp; Partner</small><strong>${us}</strong></span>
