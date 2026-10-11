@@ -776,8 +776,14 @@ export function mount(root: HTMLElement): void {
   function cardPage(title: string, lede: string, body: string): string {
     return `
       <div class="room menu-room">
+        <header class="topbar">
+          <div class="brand-block">
+            <p class="brand">Texas 42</p>
+            <p class="brand-sub">Play online</p>
+          </div>
+        </header>
         <main class="menu-layout">
-          <section class="menu-card">
+          <section class="menu-card sheet">
             <h1>${title}</h1>
             <p class="lede">${escapeHtml(lede)}</p>
             ${body}
@@ -806,13 +812,13 @@ export function mount(root: HTMLElement): void {
           <p class="brand">Texas 42</p>
           <p class="brand-sub">Room ${escapeHtml(roomCode)}</p>
         </header>
-        <main class="menu-layout">
-          <section class="menu-card">
+        <main class="menu-layout with-aside">
+          <section class="menu-card sheet">
             <h1>${role === "host" ? "Your table is open." : "You are in the room."}</h1>
             ${hostControls}
-            ${chatHtml()}
             <button type="button" class="link-action" data-act="back">Back</button>
           </section>
+          <aside class="lobby-chat">${chatHtml()}</aside>
         </main>
       </div>`;
   }
