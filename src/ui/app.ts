@@ -642,16 +642,30 @@ export function mount(root: HTMLElement): void {
     field.setSelectionRange(pos, pos);
   }
 
+  const HERO_TILES: Domino[] = [
+    { hi: 6, lo: 6 },
+    { hi: 5, lo: 4 },
+    { hi: 3, lo: 2 },
+  ];
+
+  function heroTilesHtml(): string {
+    return `<div class="hero-tiles" aria-hidden="true">
+      ${HERO_TILES.map((d) => boneHtml(d, { size: "lg" })).join("")}
+    </div>`;
+  }
+
   function homeHtml(): string {
     return `
       <div class="room menu-room">
         <main class="front">
+          ${heroTilesHtml()}
           <h1 class="front-title">Texas 42</h1>
+          <p class="front-tagline">The trick-taking domino game, dealt out online or on the couch.</p>
           <div class="front-actions">
             <button type="button" class="primary" data-act="online">Play Online</button>
-            <button type="button" class="primary" data-act="offline">Play Offline</button>
-            <button type="button" class="primary" data-act="tutorial">Tutorial</button>
+            <button type="button" class="secondary" data-act="offline">Play Offline</button>
           </div>
+          <button type="button" class="link-action" data-act="tutorial">New to 42? Start the tutorial</button>
           ${menuNote ? `<p class="fine">${escapeHtml(menuNote)}</p>` : ""}
         </main>
       </div>`;
@@ -660,24 +674,26 @@ export function mount(root: HTMLElement): void {
   function onlineHtml(): string {
     return cardPage(
       "Play online",
+      "Host a table for friends or drop into one with a room code.",
       `<div class="front-actions">
         <button type="button" class="primary" data-act="host-form">Host a Room</button>
-        <button type="button" class="primary" data-act="join-form">Join a Room</button>
-        <button type="button" class="ghost" data-act="back">Back</button>
-      </div>`,
+        <button type="button" class="secondary" data-act="join-form">Join a Room</button>
+      </div>
+      <button type="button" class="link-action" data-act="back">Back</button>`,
     );
   }
 
   function hostFormHtml(): string {
     return cardPage(
       "Host a room",
+      "You'll get a code to share. Empty seats play as bots until friends take them.",
       `<label class="field">Your name
-        <input data-field="name" maxlength="16" value="${escapeHtml(playerName)}" autocomplete="nickname" />
+        <input data-field="name" maxlength="16" value="${escapeHtml(playerName)}" autocomplete="nickname" placeholder="e.g. Dana" />
       </label>
       <div class="front-actions">
         <button type="button" class="primary" data-act="host">Host</button>
-        <button type="button" class="ghost" data-act="back">Back</button>
       </div>
+      <button type="button" class="link-action" data-act="back">Back</button>
       ${menuNote ? `<p class="fine">${escapeHtml(menuNote)}</p>` : ""}`,
     );
   }
@@ -685,26 +701,28 @@ export function mount(root: HTMLElement): void {
   function joinFormHtml(): string {
     return cardPage(
       "Join a room",
+      "Ask the host for their 4-letter room code.",
       `<label class="field">Your name
-        <input data-field="name" maxlength="16" value="${escapeHtml(playerName)}" autocomplete="nickname" />
+        <input data-field="name" maxlength="16" value="${escapeHtml(playerName)}" autocomplete="nickname" placeholder="e.g. Dana" />
       </label>
       <label class="field">Room code
-        <input data-field="code" maxlength="4" value="${escapeHtml(joinCode)}" autocapitalize="characters" spellcheck="false" />
+        <input data-field="code" maxlength="4" value="${escapeHtml(joinCode)}" autocapitalize="characters" spellcheck="false" placeholder="ABCD" />
       </label>
       <div class="front-actions">
         <button type="button" class="primary" data-act="join">Join</button>
-        <button type="button" class="ghost" data-act="back">Back</button>
       </div>
+      <button type="button" class="link-action" data-act="back">Back</button>
       ${menuNote ? `<p class="fine">${escapeHtml(menuNote)}</p>` : ""}`,
     );
   }
 
-  function cardPage(title: string, body: string): string {
+  function cardPage(title: string, lede: string, body: string): string {
     return `
       <div class="room menu-room">
         <main class="menu-layout">
           <section class="menu-card">
             <h1>${title}</h1>
+            <p class="lede">${escapeHtml(lede)}</p>
             ${body}
           </section>
         </main>
@@ -714,21 +732,24 @@ export function mount(root: HTMLElement): void {
   function lobbyHtml(): string {
     const seats = ([0, 1, 2, 3] as Seat[])
       .map((seat) => {
-        const label = seat === 0 ? "South (host)" : seatWord(seat, 0, names);
-        if (seat === 0) return `${names[0] ? `${names[0]} · ` : ""}${label}`;
-        if (humans.has(seat)) return `${seatWord(seat, 0, names)} · joined`;
-        return `${label} · bot, until someone joins`;
+        const host = seat === 0;
+        const joined = host || humans.has(seat);
+        const label = host
+          ? `${names[0] ? escapeHtml(names[0]) : "You"} · host`
+          : joined
+            ? `${escapeHtml(seatWord(seat, 0, names))} · joined`
+            : `${escapeHtml(seatWord(seat, 0, names))} · open seat, bot for now`;
+        return `<li class="${joined ? "joined" : "open"}"><span class="seat-dot" aria-hidden="true"></span>${label}</li>`;
       })
-      .map((line) => `<li>${escapeHtml(line)}</li>`)
       .join("");
     const hostControls =
       role === "host"
         ? `<p class="room-code">${escapeHtml(roomCode)}</p>
-           <p class="fine">Share the code or this link. The first friend sits on your left, the second sits across as your partner, and the third sits on your right. Empty seats are bots. Keep this tab open for the whole match.</p>
-           <p class="fine">${escapeHtml(roomLink())}</p>
+           <p class="fine">Share the code or link below. Seats fill left, across, then right of you. Empty seats play as bots. Keep this tab open for the whole match.</p>
+           <p class="fine room-link">${escapeHtml(roomLink())}</p>
            <div class="menu-actions">
              <button type="button" class="primary" data-act="deal-online">Fill empty seats and deal</button>
-             <button type="button" class="ghost" data-act="copy">Copy link</button>
+             <button type="button" class="secondary" data-act="copy">Copy link</button>
            </div>
            ${menuNote ? `<p class="fine">${escapeHtml(menuNote)}</p>` : ""}
            <ul class="lobby-seats">${seats}</ul>`
@@ -745,9 +766,7 @@ export function mount(root: HTMLElement): void {
             <h1>${role === "host" ? "Your table is open." : "You are in the room."}</h1>
             ${hostControls}
             ${chatHtml()}
-            <div class="menu-actions">
-              <button type="button" class="ghost" data-act="back">Back</button>
-            </div>
+            <button type="button" class="link-action" data-act="back">Back</button>
           </section>
         </main>
       </div>`;
