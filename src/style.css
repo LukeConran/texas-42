@@ -316,7 +316,7 @@ h1, h2, h3, .brand, .scoreline strong, .result-card h2 {
   transform: rotate(-135deg);
 }
 .coach-spot-partner {
-  top: 168px;
+  top: 214px;
   left: 50%;
   transform: translateX(-50%);
 }
@@ -326,13 +326,13 @@ h1, h2, h3, .brand, .scoreline strong, .result-card h2 {
   transform: rotate(-135deg);
 }
 .coach-spot-opponents {
-  top: 46%;
-  left: max(16px, calc(50% - 430px));
+  top: 310px;
+  left: 172px;
 }
 .coach-spot-opponents::after {
-  top: calc(50% - 7px);
-  right: -8px;
-  transform: rotate(-45deg);
+  top: 36px;
+  left: -8px;
+  transform: rotate(135deg);
 }
 .coach-spot-trump {
   left: 18px;
@@ -344,8 +344,8 @@ h1, h2, h3, .brand, .scoreline strong, .result-card h2 {
   transform: rotate(45deg);
 }
 .coach-spot-tricks {
-  top: 96px;
-  right: 18px;
+  top: 120px;
+  right: 332px;
 }
 .coach-spot-tricks::after {
   top: 22px;
@@ -734,6 +734,16 @@ legend { margin-bottom: 8px; color: var(--gold); }
 
 @media (max-width: 980px) {
   .play, .menu-layout { grid-template-columns: 1fr; }
+  .coach-spot-tricks,
+  .coach-spot-opponents {
+    top: auto;
+    right: 16px;
+    bottom: 16px;
+    left: 16px;
+    width: auto;
+  }
+  .coach-spot-tricks::after,
+  .coach-spot-opponents::after { display: none; }
   .rules-pop { left: 12px; right: 12px; width: auto; }
   .middle { grid-template-columns: 86px minmax(0, 1fr) 86px; }
   .trick { height: 280px; }
