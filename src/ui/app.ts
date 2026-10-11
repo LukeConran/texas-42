@@ -28,6 +28,18 @@ const PACE_MS = {
 
 type Pace = keyof typeof PACE_MS;
 
+const HERO_TILES: Domino[] = [
+  { hi: 6, lo: 6 },
+  { hi: 5, lo: 4 },
+  { hi: 3, lo: 2 },
+];
+
+function heroTilesHtml(): string {
+  return `<div class="hero-tiles" aria-hidden="true">
+    ${HERO_TILES.map((d) => boneHtml(d, { size: "lg" })).join("")}
+  </div>`;
+}
+
 const HONORS: Domino[] = [
   { hi: 5, lo: 0 },
   { hi: 4, lo: 1 },
@@ -640,18 +652,6 @@ export function mount(root: HTMLElement): void {
     field.focus();
     const pos = caret ?? field.value.length;
     field.setSelectionRange(pos, pos);
-  }
-
-  const HERO_TILES: Domino[] = [
-    { hi: 6, lo: 6 },
-    { hi: 5, lo: 4 },
-    { hi: 3, lo: 2 },
-  ];
-
-  function heroTilesHtml(): string {
-    return `<div class="hero-tiles" aria-hidden="true">
-      ${HERO_TILES.map((d) => boneHtml(d, { size: "lg" })).join("")}
-    </div>`;
   }
 
   function homeHtml(): string {
