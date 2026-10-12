@@ -297,89 +297,16 @@ h1, h2, h3, .brand, .scoreline strong, .result-card h2 {
 .coach::after {
   content: "";
   position: absolute;
+  left: var(--arrow-x, calc(50% - 7px));
+  top: var(--arrow-y, -8px);
   width: 14px;
   height: 14px;
   background: var(--ivory);
   border-right: 1px solid var(--gold);
   border-bottom: 1px solid var(--gold);
+  transform: rotate(var(--arrow-turn, -135deg));
 }
-.coach-spot-marks,
-.coach-spot-watch {
-  top: 86px;
-  left: 50%;
-  transform: translateX(-50%);
-}
-.coach-spot-marks::after,
-.coach-spot-watch::after {
-  top: -8px;
-  left: calc(50% - 7px);
-  transform: rotate(-135deg);
-}
-.coach-spot-partner {
-  top: 214px;
-  left: 50%;
-  transform: translateX(-50%);
-}
-.coach-spot-partner::after {
-  top: -8px;
-  left: calc(50% - 7px);
-  transform: rotate(-135deg);
-}
-.coach-spot-opponents {
-  top: 310px;
-  left: 172px;
-}
-.coach-spot-opponents::after {
-  top: 36px;
-  left: -8px;
-  transform: rotate(135deg);
-}
-.coach-spot-trump {
-  left: 18px;
-  bottom: 112px;
-}
-.coach-spot-trump::after {
-  bottom: -8px;
-  left: 28px;
-  transform: rotate(45deg);
-}
-.coach-spot-tricks {
-  top: 120px;
-  right: 332px;
-}
-.coach-spot-tricks::after {
-  top: 22px;
-  right: -8px;
-  transform: rotate(-45deg);
-}
-.coach-spot-hand {
-  left: 50%;
-  bottom: 168px;
-  transform: translateX(-50%);
-}
-.coach-spot-hand::after {
-  bottom: -8px;
-  left: calc(50% - 7px);
-  transform: rotate(45deg);
-}
-.coach-spot-bids,
-.coach-spot-trumps {
-  left: 50%;
-  bottom: 248px;
-  transform: translateX(-50%);
-}
-.coach-spot-bids::after,
-.coach-spot-trumps::after {
-  bottom: -8px;
-  left: calc(50% - 7px);
-  transform: rotate(45deg);
-}
-.coach-spot-done {
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-}
-.coach-spot-done::after { display: none; }
+.coach.coach-no-arrow::after { display: none; }
 [data-spot].lit {
   outline: 3px solid var(--gold);
   outline-offset: 4px;
@@ -588,17 +515,36 @@ button.tile:disabled {
 }
 .menu-layout {
   display: grid;
-  grid-template-columns: minmax(280px, 620px);
-  align-content: center;
+  grid-template-columns: min(440px, 100%);
+  align-content: start;
   justify-content: center;
   flex: 1;
   gap: 18px;
-  padding: 24px 18px 48px;
+  width: min(440px, 100%);
+  margin: 0 auto;
+  padding: 8px 18px 48px;
+}
+.menu-layout.with-aside {
+  grid-template-columns: minmax(0, 440px) minmax(240px, 320px);
+  width: min(780px, 100%);
 }
 .menu-layout:has(.rules-card) {
-  grid-template-columns: minmax(0, 620px) minmax(260px, 420px);
+  grid-template-columns: minmax(0, 440px) minmax(260px, 420px);
+  width: min(880px, 100%);
 }
 .menu-card h1 { margin: 0 0 8px; font-size: clamp(2rem, 4vw, 3.1rem); line-height: 1.05; }
+.menu-card.sheet h1 { font-size: 1.7rem; }
+.lobby-chat .chat {
+  display: flex;
+  flex-direction: column;
+  max-height: min(520px, calc(100vh - 120px));
+  margin: 0;
+}
+.lobby-chat .chat-log {
+  flex: 1;
+  min-height: 180px;
+  max-height: none;
+}
 .front {
   flex: 1;
   display: flex;
@@ -733,17 +679,9 @@ legend { margin-bottom: 8px; color: var(--gold); }
 .close-rules { float: right; }
 
 @media (max-width: 980px) {
-  .play, .menu-layout { grid-template-columns: 1fr; }
-  .coach-spot-tricks,
-  .coach-spot-opponents {
-    top: auto;
-    right: 16px;
-    bottom: 16px;
-    left: 16px;
-    width: auto;
-  }
-  .coach-spot-tricks::after,
-  .coach-spot-opponents::after { display: none; }
+  .play, .menu-layout, .menu-layout.with-aside { grid-template-columns: 1fr; }
+  .menu-layout, .menu-layout.with-aside { width: min(440px, 100%); }
+  .lobby-chat .chat { max-height: 320px; }
   .rules-pop { left: 12px; right: 12px; width: auto; }
   .middle { grid-template-columns: 86px minmax(0, 1fr) 86px; }
   .trick { height: 280px; }

@@ -3,7 +3,7 @@ import { dominoKey } from "../engine/domino";
 import type { Action } from "../engine/game";
 import { trumpKey } from "../engine/trump";
 
-export type LessonSpot = "partner" | "opponents" | "marks" | "trump" | "tricks" | "hand" | "bids" | "trumps";
+export type LessonSpot = "partner" | "opponents" | "marks" | "trump" | "tricks" | "hand" | "bids" | "trumps" | "played";
 
 export interface LessonGuide {
   spot: LessonSpot;
