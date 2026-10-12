@@ -1,4 +1,4 @@
-import { BOT_STYLES, chooseAction } from "../ai/heuristic";
+import { chooseBotAction, type BotLevel } from "../ai/levels";
 import type { Domino, Seat } from "../engine/domino";
 import { dominoKey, dominoLabel, partnerOf, seatPlace, teamOf } from "../engine/domino";
 import {
@@ -13,15 +13,16 @@ import {
   defaultSettings,
   observe,
   scoreUnit,
+  trickPoints,
 } from "../engine/game";
 import { chatSpeaker, chatText, isSeat, type NetMessage } from "../net/messages";
 import { guestSeats } from "../net/seats";
 import { openGuest, openHost, type GuestLink, type HostLink } from "../net/session";
-import { trumpKey, trumpName, type Trump } from "../engine/trump";
+import { classify, trumpKey, trumpName, type Trump } from "../engine/trump";
 import { boneHtml, sortHand } from "./dominoView";
+import { lessonById, sameLessonAction, wantedKey, type Lesson, type LessonSpot } from "./lessons";
 import { clearSave, readSave, writeSave } from "./save";
-import { lessonById, sameLessonAction, wantedKey, type Lesson } from "./lessons";
-import { type Names, RULES_HTML, contractLine, needLine, seatWord, turnLine, yourPlayLine } from "./text";
+import { type Names, RULES_HTML, contractLine, needLine, seatWord, teamTag, turnLine } from "./text";
 
 const PACE_MS = {
   relaxed: { think: 900, trick: 1300, pass: 1400 },
@@ -61,10 +62,11 @@ const TRUMP_BUTTONS: Array<{ trump: Trump; label: string; hint: string }> = [
   { trump: { kind: "suit", suit: 6 }, label: "Sixes", hint: "6s" },
   { trump: { kind: "doubles" }, label: "Doubles", hint: "the seven doubles" },
   { trump: { kind: "followMe" }, label: "No Trump", hint: "follow me" },
+  { trump: { kind: "nello" }, label: "Nello", hint: "lose every trick" },
 ];
 
 export function mount(root: HTMLElement): void {
-  let screen: "home" | "online" | "host" | "join" | "lobby" | "table" = "home";
+  let screen: "home" | "online" | "offline" | "host" | "join" | "lobby" | "table" = "home";
   let role: "local" | "host" | "guest" = "local";
   let me: Seat = 0;
   let names: Names = [null, null, null, null];
@@ -81,10 +83,11 @@ export function mount(root: HTMLElement): void {
   let showHands = false;
   let soundOn = false;
   let pace: Pace = "normal";
+  let botLevel: BotLevel = "medium";
   let rulesOpen = false;
   let placed = false;
   let state: GameState | null = null;
-  let lesson: { def: Lesson; beat: number } | null = null;
+  let lesson: { def: Lesson; beat: number; guide: number; hold: boolean; sawTrick: boolean } | null = null;
   let lessonToken = 0;
   let selectedKey: string | null = null;
   let alertText = "";
@@ -92,6 +95,10 @@ export function mount(root: HTMLElement): void {
   let audio: AudioContext | null = null;
   let chat: Array<{ from: string; text: string; mine: boolean }> = [];
   let chatDraft = "";
+  let handOrder: string[] = [];
+  let mayLayDown = false;
+  let ignoreSelectUntil = 0;
+  let handDrag: { pointerId: number; key: string; startX: number; moved: boolean } | null = null;
 
   const stored = rememberStorage();
   const saved = joinCode || !stored ? null : readSave(stored);
@@ -103,6 +110,7 @@ export function mount(root: HTMLElement): void {
   } else if (saved?.kind === "local") {
     state = saved.state;
     pace = saved.pace;
+    botLevel = saved.botLevel;
     me = saved.me;
     names = [...saved.names];
     role = "local";
@@ -136,6 +144,54 @@ export function mount(root: HTMLElement): void {
     moveSeat(from, to);
   });
 
+  window.addEventListener("resize", () => placeCoach());
+
+  root.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0) return;
+    const tile = (event.target as HTMLElement | null)?.closest<HTMLElement>(".your-hand .tile");
+    if (!tile?.dataset.key) return;
+    handDrag = { pointerId: event.pointerId, key: tile.dataset.key, startX: event.clientX, moved: false };
+  });
+
+  root.addEventListener("pointermove", (event) => {
+    if (!handDrag || event.pointerId !== handDrag.pointerId) return;
+    if (Math.abs(event.clientX - handDrag.startX) > 8) handDrag.moved = true;
+    if (!handDrag.moved) return;
+    const hand = root.querySelector(".your-hand");
+    const tile = hand?.querySelector<HTMLElement>(`.tile[data-key="${handDrag.key}"]`);
+    if (!hand || !tile) return;
+    tile.classList.add("dragging");
+    const others = Array.from(hand.querySelectorAll<HTMLElement>(".tile")).filter((item) => item !== tile);
+    let before: HTMLElement | null = null;
+    for (const other of others) {
+      const rect = other.getBoundingClientRect();
+      if (event.clientX < rect.left + rect.width / 2) {
+        before = other;
+        break;
+      }
+    }
+    if (before) hand.insertBefore(tile, before);
+    else hand.appendChild(tile);
+  });
+
+  root.addEventListener("pointerup", (event) => {
+    if (!handDrag || event.pointerId !== handDrag.pointerId) return;
+    const moved = handDrag.moved;
+    handDrag = null;
+    if (!moved) return;
+    const hand = root.querySelector(".your-hand");
+    if (!hand) return;
+    handOrder = Array.from(hand.querySelectorAll<HTMLElement>(".tile"))
+      .map((tile) => tile.dataset.key ?? "")
+      .filter(Boolean);
+    hand.querySelectorAll(".dragging").forEach((tile) => tile.classList.remove("dragging"));
+    ignoreSelectUntil = performance.now() + 400;
+  });
+
+  root.addEventListener("pointercancel", () => {
+    handDrag = null;
+  });
+
   root.addEventListener("click", (event) => {
     const target = (event.target as HTMLElement | null)?.closest<HTMLElement>("[data-act]");
     if (!target || !root.contains(target)) return;
@@ -144,7 +200,14 @@ export function mount(root: HTMLElement): void {
     if (act === "online") {
       menuNote = "";
       screen = "online";
-    } else if (act === "offline") startMatch();
+    } else if (act === "offline") {
+      menuNote = "";
+      screen = "offline";
+    } else if (act === "deal-offline") startMatch();
+    else if (act === "bots") {
+      const next = target.dataset.level;
+      if (next === "easy" || next === "medium" || next === "hard") botLevel = next;
+    }
     else if (act === "tutorial") startLesson("follow");
     else if (act === "host-form") {
       menuNote = "";
@@ -153,6 +216,7 @@ export function mount(root: HTMLElement): void {
       menuNote = "";
       screen = "join";
     } else if (act === "back") goBack();
+    else if (act === "guide-next") advanceGuide();
     else if (act === "lesson") startLesson(target.dataset.lesson ?? "");
     else if (act === "host") void startHost();
     else if (act === "join") void startJoin();
@@ -171,8 +235,13 @@ export function mount(root: HTMLElement): void {
     }
     else if (act === "bid") onBid(target.dataset.amount === "pass" ? "pass" : Number(target.dataset.amount));
     else if (act === "trump") onTrump(target.dataset.trump ?? "");
-    else if (act === "select") onSelect(target.dataset.key ?? "");
-    else if (act === "play") playSelected();
+    else if (act === "select") {
+      if (performance.now() < ignoreSelectUntil) ignoreSelectUntil = 0;
+      else onSelect(target.dataset.key ?? "");
+    } else if (act === "play") playSelected();
+    else if (act === "lay-down") {
+      if (state?.phase === "playing" && state.turn === me) commit({ type: "layDown" });
+    }
     else if (act === "next") {
       if (state?.phase === "handComplete") commit({ type: "nextHand" });
     } else if (act === "new-match") {
@@ -298,7 +367,7 @@ export function mount(root: HTMLElement): void {
       const thinking = state;
       timer = window.setTimeout(() => {
         if (state !== thinking || state.turn !== seat) return;
-        const action = chooseAction(observe(state, seat), BOT_STYLES[seat === 0 ? 1 : seat]);
+        const action = chooseBotAction(observe(state, seat), botLevel);
         if (action.type === "play") blip(360, 0.03);
         commit(action);
       }, delays.think);
@@ -342,6 +411,7 @@ export function mount(root: HTMLElement): void {
         version: 1,
         state,
         pace,
+        botLevel,
         me,
         names: [names[0] ?? null, names[1] ?? null, names[2] ?? null, names[3] ?? null],
         wasOnline: role === "host",
@@ -375,7 +445,7 @@ export function mount(root: HTMLElement): void {
   }
 
   function goBack(): void {
-    if (screen === "online") {
+    if (screen === "online" || screen === "offline") {
       menuNote = "";
       screen = "home";
       return;
@@ -415,7 +485,8 @@ export function mount(root: HTMLElement): void {
     names = [null, null, null, null];
     humans = new Set();
     showHands = false;
-    lesson = { def, beat: 0 };
+    pace = "relaxed";
+    lesson = { def, beat: 0, guide: 0, hold: false, sawTrick: false };
     resumeNote = "";
     confirmLeave = false;
     state = createMatch(matchSettings(def.seed));
@@ -444,12 +515,66 @@ export function mount(root: HTMLElement): void {
     return true;
   }
 
+  function advanceGuide(): void {
+    if (!lesson) return;
+    if (lesson.guide < lesson.def.guide.length) {
+      lesson.guide += 1;
+      pumpLesson();
+      return;
+    }
+    if (lesson.hold) {
+      lesson.hold = false;
+      pumpLesson();
+    }
+  }
+
+  function coachMoment(): { say: string; spot: LessonSpot | "watch" | "done"; showNext: boolean } | null {
+    if (!lesson) return null;
+    if (lesson.hold) {
+      return { say: "This trick stays in the middle until you hit Next.", spot: "played", showNext: true };
+    }
+    const guide = lesson.def.guide[lesson.guide];
+    if (guide) return { say: guide.say, spot: guide.spot, showNext: true };
+    const beat = lesson.def.beats[lesson.beat];
+    if (!beat) return { say: lesson.def.done, spot: "done", showNext: false };
+    if (beat.kind === "you") return { say: beat.say, spot: beat.spot ?? "hand", showNext: false };
+    if (state && state.completedTricks.length >= 1 && state.currentTrick.length === 0) {
+      return { say: "That trick is in the column now.", spot: "tricks", showNext: false };
+    }
+    return { say: "Watch the table.", spot: "watch", showNext: false };
+  }
+
+  function activeSpot(): LessonSpot | null {
+    const moment = coachMoment();
+    if (!moment || moment.spot === "watch" || moment.spot === "done") return null;
+    return moment.spot;
+  }
+
+  function spotClass(spot: LessonSpot): string {
+    return activeSpot() === spot ? "lit" : "";
+  }
+
   function pumpLesson(): void {
     const token = (lessonToken += 1);
+    if (lesson && lesson.guide < lesson.def.guide.length) {
+      render();
+      return;
+    }
     const step = (): void => {
       if (token !== lessonToken || !lesson || !state) return;
       const beat = lesson.def.beats[lesson.beat];
       if (!beat || beat.kind === "you") {
+        render();
+        return;
+      }
+      if (
+        beat.action.type === "acknowledgeTrick" &&
+        !lesson.sawTrick &&
+        state.currentTrick.length === 4 &&
+        state.completedTricks.length === 0
+      ) {
+        lesson.sawTrick = true;
+        lesson.hold = true;
         render();
         return;
       }
@@ -470,7 +595,7 @@ export function mount(root: HTMLElement): void {
         run();
         return;
       }
-      timer = window.setTimeout(run, 360);
+      timer = window.setTimeout(run, PACE_MS[pace].trick);
       render();
     };
     step();
@@ -538,7 +663,7 @@ export function mount(root: HTMLElement): void {
     if (message.type === "chat") {
       const text = chatText(message.text);
       if (!text) return;
-      const from = names[seat] || seatWord(seat, me, names);
+      const from = names[seat] || seatWord(seat, names);
       relayChat(from, text, seat);
       rememberChat(from, text, false);
       return;
@@ -570,7 +695,7 @@ export function mount(root: HTMLElement): void {
     }
     if (message.type !== "action" || !state || state.turn !== seat) return;
     const action = message.action;
-    if (action.type !== "bid" && action.type !== "declareTrump" && action.type !== "play") return;
+    if (action.type !== "bid" && action.type !== "declareTrump" && action.type !== "play" && action.type !== "layDown") return;
     commit(action);
   }
 
@@ -688,6 +813,7 @@ export function mount(root: HTMLElement): void {
     if (message.type !== "sync") return;
     me = message.view.seat;
     names = [message.names[0] ?? null, message.names[1] ?? null, message.names[2] ?? null, message.names[3] ?? null];
+    mayLayDown = message.view.mayLayDown;
     state = stateFromView(message.view);
     screen = "table";
     alertText = "";
@@ -761,8 +887,13 @@ export function mount(root: HTMLElement): void {
     return ((me + steps) % 4) as Seat;
   }
 
+  function teamLabel(team: 0 | 1): string {
+    const seats: [Seat, Seat] = team === 0 ? [0, 2] : [1, 3];
+    return teamTag(seats, names);
+  }
+
   function opponentsLabel(): string {
-    return `${seatWord(seatAt("w"), me, names)} & ${seatWord(seatAt("e"), me, names)}`;
+    return teamLabel(teamOf(me) === 0 ? 1 : 0);
   }
 
   function roomLink(): string {
@@ -789,11 +920,13 @@ export function mount(root: HTMLElement): void {
     if (screen === "table" && state) root.innerHTML = tableHtml(state);
     else if (screen === "lobby") root.innerHTML = lobbyHtml();
     else if (screen === "online") root.innerHTML = onlineHtml();
+    else if (screen === "offline") root.innerHTML = offlineHtml();
     else if (screen === "host") root.innerHTML = hostFormHtml();
     else if (screen === "join") root.innerHTML = joinFormHtml();
     else root.innerHTML = homeHtml();
     const log = root.querySelector<HTMLElement>(".chat-log");
     if (log) log.scrollTop = log.scrollHeight;
+    placeCoach();
     if (!chatFocused) return;
     const field = root.querySelector<HTMLInputElement>('[data-field="chat"]');
     if (!field) return;
@@ -817,6 +950,25 @@ export function mount(root: HTMLElement): void {
           ${menuNote ? `<p class="fine">${escapeHtml(menuNote)}</p>` : ""}
         </main>
       </div>`;
+  }
+
+  function offlineHtml(): string {
+    const choice = (level: BotLevel, label: string) =>
+      `<button type="button" class="choice ${botLevel === level ? "on" : ""}" data-act="bots" data-level="${level}" aria-pressed="${botLevel === level}">${label}</button>`;
+    return cardPage(
+      "Play offline",
+      "Choose how hard the other three chairs play, then deal. Medium is the usual bot.",
+      `<div class="choice-row">
+        ${choice("easy", "Easy")}
+        ${choice("medium", "Medium")}
+        ${choice("hard", "Hard")}
+      </div>
+      <div class="front-actions">
+        <button type="button" class="primary" data-act="deal-offline">Deal</button>
+      </div>
+      <button type="button" class="link-action" data-act="back">Back</button>`,
+      "On this computer",
+    );
   }
 
   function onlineHtml(): string {
@@ -864,11 +1016,17 @@ export function mount(root: HTMLElement): void {
     );
   }
 
-  function cardPage(title: string, lede: string, body: string): string {
+  function cardPage(title: string, lede: string, body: string, kicker = "Play online"): string {
     return `
       <div class="room menu-room">
+        <header class="topbar">
+          <div class="brand-block">
+            <p class="brand">Texas 42</p>
+            <p class="brand-sub">${escapeHtml(kicker)}</p>
+          </div>
+        </header>
         <main class="menu-layout">
-          <section class="menu-card">
+          <section class="menu-card sheet">
             <h1>${title}</h1>
             <p class="lede">${escapeHtml(lede)}</p>
             ${body}
@@ -881,8 +1039,10 @@ export function mount(root: HTMLElement): void {
     const hostControls =
       role === "host"
         ? `<p class="room-code">${escapeHtml(roomCode)}</p>
-           <p class="fine">Share the code or link below. Partners sit across: South with North, West with East. Put two people across from each other to partner them, or side by side to oppose them. An empty seat is a bot. Seats stay put once the first hand is dealt. Keep this tab open for the whole match.</p>
+           <p class="fine">Share the code or link below. Partners sit across: Player 1 with Player 3, Player 2 with Player 4. Put two people across from each other to partner them, or side by side to oppose them. An empty seat is a bot. Seats stay put once the first hand is dealt. Keep this tab open for the whole match.</p>
            <p class="fine room-link">${escapeHtml(roomLink())}</p>
+           <p class="fine">Empty seats</p>
+           <div class="choice-row">${botButtons()}</div>
            <div class="menu-actions">
              <button type="button" class="primary" data-act="deal-online">Deal the first hand</button>
              <button type="button" class="secondary" data-act="copy">Copy link</button>
@@ -897,13 +1057,13 @@ export function mount(root: HTMLElement): void {
           <p class="brand">Texas 42</p>
           <p class="brand-sub">Room ${escapeHtml(roomCode)}</p>
         </header>
-        <main class="menu-layout">
-          <section class="menu-card">
+        <main class="menu-layout with-aside">
+          <section class="menu-card sheet">
             <h1>${role === "host" ? "Your table is open." : "You are in the room."}</h1>
             ${hostControls}
-            ${chatHtml()}
             <button type="button" class="link-action" data-act="back">Back</button>
           </section>
+          <aside class="lobby-chat">${chatHtml()}</aside>
         </main>
       </div>`;
   }
@@ -924,15 +1084,16 @@ export function mount(root: HTMLElement): void {
         <header class="topbar">
           <div class="brand-block">
             <p class="brand">Texas 42</p>
-            <p class="brand-sub">Hand ${game.handNumber} · first to ${target} ${matchUnit}</p>
+            <p class="brand-sub">Hand ${game.handNumber} · first to ${target} ${matchUnit}${role === "local" && !lesson ? ` · ${botLevel} bots` : ""}</p>
             ${resumeNote ? `<p class="resume-note">${escapeHtml(resumeNote)}</p>` : ""}
           </div>
-          <div class="scoreline" aria-label="Match score">
-            <span class="us"><small>You &amp; Partner</small><strong>${us}</strong></span>
+          <div class="scoreline ${spotClass("marks")}" data-spot="marks" aria-label="Match score">
+            <span class="us"><small>${escapeHtml(teamLabel(mine))}</small><strong>${us}</strong></span>
             <span class="divider" aria-hidden="true"></span>
             <span class="them"><small>${escapeHtml(opponentsLabel())}</small><strong>${them}</strong></span>
           </div>
           <div class="tools">
+            ${role === "guest" || lesson ? "" : botButtons()}
             ${role === "guest" ? "" : paceButtons()}
             ${handsButton}
             <button type="button" class="tool ${soundOn ? "on" : ""}" data-act="sound">${soundOn ? "Sound on" : "Sound off"}</button>
@@ -948,15 +1109,17 @@ export function mount(root: HTMLElement): void {
                 <div class="middle">
                   ${seatBlock(game, seatAt("w"), "west")}
                   <div class="trick-wrap">
-                    <p class="status" aria-live="polite">${escapeHtml(lessonOver() ? "Lesson complete." : turnLine(game, me, names))}</p>
-                    <div class="trick">${trickSlots(game)}</div>
+                    <div class="trick ${spotClass("played")}" data-spot="played">
+                      <p class="status" aria-live="polite">${escapeHtml(lessonOver() ? "Lesson complete." : turnLine(game, me, names))}</p>
+                      ${trickSlots(game)}
+                    </div>
                     <p class="contract">${escapeHtml(handBanner(game, me, names))}</p>
                     <p class="count-out">${escapeHtml(countOutLine(game))}</p>
                   </div>
                   ${seatBlock(game, seatAt("e"), "east")}
                 </div>
                 <div class="south-plate ${game.turn === me ? "active" : ""}">
-                  <span>You</span>
+                  <span>${escapeHtml(seatWord(me, names))}</span>
                   ${game.phase === "bidding" && game.shaker === me ? "<em>shook</em>" : ""}
                 </div>
               </div>
@@ -965,7 +1128,7 @@ export function mount(root: HTMLElement): void {
               ${dockHtml(game)}
             </div>
             ${yourBidRow(game, me)}
-            <div class="your-hand" aria-label="Your hand">
+            <div class="your-hand ${spotClass("hand")}" data-spot="hand" aria-label="Your hand">
               ${yourHandHtml(game)}
             </div>
           </section>
@@ -979,6 +1142,16 @@ export function mount(root: HTMLElement): void {
         ${confirmLeave ? leaveConfirmHtml() : ""}
         ${rulesOpen ? `<div class="rules-pop" role="dialog" aria-label="Rules"><button type="button" class="tool close-rules" data-act="close-rules">Close</button>${RULES_HTML}</div>` : ""}
       </div>`;
+  }
+
+  function botButtons(): string {
+    const labels: Record<BotLevel, string> = { easy: "Easy", medium: "Medium", hard: "Hard" };
+    return (Object.keys(labels) as BotLevel[])
+      .map(
+        (level) =>
+          `<button type="button" class="tool ${botLevel === level ? "on" : ""}" data-act="bots" data-level="${level}">${labels[level]}</button>`,
+      )
+      .join("");
   }
 
   function paceButtons(): string {
@@ -1005,13 +1178,13 @@ export function mount(root: HTMLElement): void {
       )
       .join("");
     return `
-      <div class="seat seat-${place} ${active ? "active" : ""} ${reveal ? "open" : ""} ${teamOf(seat) === teamOf(me) ? "team-us" : "team-them"}">
+      <div class="seat seat-${place} ${active ? "active" : ""} ${reveal ? "open" : ""} ${teamOf(seat) === teamOf(me) ? "team-us" : "team-them"} ${spotClass(place === "north" ? "partner" : "opponents")}" data-spot="${place === "north" ? "partner" : "opponents"}">
         <div class="seat-stack">
           <div class="seat-tiles">${tiles}</div>
           ${bidChip(game, seat)}
         </div>
         <div class="nameplate">
-          <strong>${escapeHtml(seatWord(seat, me, names))}</strong>
+          <strong>${escapeHtml(seatWord(seat, names))}</strong>
           ${game.phase === "bidding" && game.shaker === seat ? "<em>shook</em>" : ""}
           ${game.shaker === seat ? `<span class="shaker">shaker</span>` : ""}
         </div>
@@ -1041,21 +1214,35 @@ export function mount(root: HTMLElement): void {
   function yourHandHtml(game: GameState): string {
     const legal = legalKeys(game);
     const yourTurn = game.phase === "playing" && game.turn === me && !lessonOver();
-    return sortHand(game.hands[me], game.trump)
+    return orderedHand(game)
       .map((d) => {
         const key = dominoKey(d);
-        const playable = !yourTurn || legal.has(key);
         const wanted = wantedKey(lesson?.def.beats[lesson.beat]);
         return boneHtml(d, {
           size: "lg",
           trump: game.trump,
-          interactive: playable && yourTurn,
-          selected: selectedKey === key && playable,
+          interactive: true,
+          selected: selectedKey === key && yourTurn && legal.has(key),
           locked: yourTurn && !legal.has(key),
           marked: yourTurn && wanted === key,
         });
       })
       .join("");
+  }
+
+  function orderedHand(game: GameState): Domino[] {
+    const hand = game.hands[me];
+    const byKey = new Map(hand.map((domino) => [dominoKey(domino), domino]));
+    const current = new Set(byKey.keys());
+    const known = handOrder.filter((key) => current.has(key));
+    const hasNew = [...current].some((key) => !handOrder.includes(key));
+    if (hasNew || known.length !== current.size) {
+      const sorted = sortHand(hand, game.trump);
+      handOrder = sorted.map(dominoKey);
+      return sorted;
+    }
+    handOrder = known;
+    return known.map((key) => byKey.get(key)!);
   }
 
   function lessonOver(): boolean {
@@ -1073,22 +1260,30 @@ export function mount(root: HTMLElement): void {
           return `<button type="button" class="${cls}" data-act="bid" data-amount="${amount}">${label}</button>`;
         })
         .join("");
-      return `<div class="bids" aria-label="Your bid">${buttons}</div>`;
+      return `<div class="bids ${spotClass("bids")}" data-spot="bids" aria-label="Your bid">${buttons}</div>`;
     }
     if (game.phase === "trump" && game.turn === me) {
       const buttons = TRUMP_BUTTONS.map(
         (item) =>
           `<button type="button" class="trump" data-act="trump" data-trump="${trumpKey(item.trump)}"><strong>${item.label}</strong><small>${item.hint}</small></button>`,
       ).join("");
-      return `<div class="trumps" aria-label="Name trump">${buttons}</div>`;
+      return `<div class="trumps ${spotClass("trumps")}" data-spot="trumps" aria-label="Name trump">${buttons}</div>`;
     }
+    const lay = viewerMayLayDown(game)
+      ? `<button type="button" class="primary" data-act="lay-down">Lay down</button>`
+      : "";
     if (game.phase === "playing" && game.turn === me && selectedKey && legalKeys(game).has(selectedKey)) {
-      return `<div class="play-row"><p class="dock-note">${escapeHtml(yourPlayLine(game, me))}</p><button type="button" class="primary play-go" data-act="play">Play ${selectedKey}</button></div>`;
+      return `<div class="play-row">${lay}<button type="button" class="primary play-go" data-act="play">Play ${selectedKey}</button></div>`;
     }
-    if (game.phase === "playing" && game.turn === me) {
-      return `<p class="dock-note">${escapeHtml(alertText || yourPlayLine(game, me))}</p>`;
-    }
-    return `<p class="dock-note">${escapeHtml(alertText || waitingNote(game, me, names))}</p>`;
+    if (alertText) return `<p class="dock-note">${escapeHtml(alertText)}</p>${lay}`;
+    if (lay) return `<div class="play-row">${lay}</div>`;
+    return "";
+  }
+
+  function viewerMayLayDown(game: GameState): boolean {
+    if (game.phase !== "playing" || game.turn !== me || lessonOver()) return false;
+    if (role === "guest") return mayLayDown;
+    return observe(game, me).mayLayDown;
   }
 
   function legalKeys(game: GameState): Set<string> {
@@ -1101,20 +1296,22 @@ export function mount(root: HTMLElement): void {
     const ours = game.completedTricks.filter((trick) => teamOf(trick.winner) === mine);
     const theirs = game.completedTricks.filter((trick) => teamOf(trick.winner) !== mine);
     return `
-      <div class="trick-board">
+      <div class="trick-board ${spotClass("tricks")}" data-spot="tricks">
         <section class="won theirs">
           <header>
             <h2>${escapeHtml(opponentsLabel())}</h2>
-            <span>${game.handPoints[mine === 0 ? 1 : 0]}</span>
+            <span>${shownPoints(game, mine === 0 ? 1 : 0)}</span>
           </header>
+          ${bidMeterHtml(game, mine === 0 ? 1 : 0, me)}
           ${trickStack(game, theirs)}
         </section>
         <div class="stack-gap" aria-hidden="true"></div>
         <section class="won ours">
           <header>
-            <h2>You &amp; Partner</h2>
-            <span>${game.handPoints[mine]}</span>
+            <h2>${escapeHtml(teamLabel(mine))}</h2>
+            <span>${shownPoints(game, mine)}</span>
           </header>
+          ${bidMeterHtml(game, mine, me)}
           ${trickStack(game, ours)}
         </section>
       </div>`;
@@ -1129,7 +1326,7 @@ export function mount(root: HTMLElement): void {
             boneHtml(play.domino, {
               size: "xs",
               trump: game.trump,
-              marked: play.player === trick.winner,
+              marked: game.trump ? classify(play.domino, game.trump).isTrump : false,
             }),
           )
           .join("");
@@ -1140,7 +1337,7 @@ export function mount(root: HTMLElement): void {
 
   function trumpBadgeHtml(game: GameState): string {
     if (!game.trump) {
-      return `<aside class="trump-badge waiting" aria-label="Trump"><p class="trump-kicker">Trump</p><strong>Not named</strong></aside>`;
+      return `<aside class="trump-badge waiting ${spotClass("trump")}" data-spot="trump" aria-label="Trump"><p class="trump-kicker">Trump</p><strong>Not named</strong></aside>`;
     }
     const label = game.trump.kind === "followMe" ? "No Trump" : trumpName(game.trump);
     const icon =
@@ -1149,24 +1346,25 @@ export function mount(root: HTMLElement): void {
         : game.trump.kind === "suit"
           ? boneHtml({ hi: game.trump.suit, lo: game.trump.suit }, { size: "sm", trump: game.trump })
           : "";
-    return `<aside class="trump-badge" aria-live="polite" aria-label="Trump is ${label}"><p class="trump-kicker">Trump</p><strong>${escapeHtml(label)}</strong>${icon}</aside>`;
+    return `<aside class="trump-badge ${spotClass("trump")}" data-spot="trump" aria-live="polite" aria-label="Trump is ${label}"><p class="trump-kicker">Trump</p><strong>${escapeHtml(label)}</strong>${icon}</aside>`;
   }
 
   function coachHtml(): string {
-    if (!lesson) return "";
-    const beat = lesson.def.beats[lesson.beat];
-    const say = beat ? (beat.kind === "you" ? beat.say : "Watch the table.") : lesson.def.done;
-    const next = beat
-      ? ""
-      : `<div class="menu-actions">
+    const moment = coachMoment();
+    if (!lesson || !moment) return "";
+    const next = moment.showNext
+      ? `<button type="button" class="primary" data-act="guide-next">Next</button>`
+      : moment.spot === "done"
+        ? `<div class="menu-actions">
           <button type="button" class="primary" data-act="lesson" data-lesson="follow">Follow suit</button>
           <button type="button" class="ghost" data-act="lesson" data-lesson="count">Count the points</button>
-        </div>`;
+        </div>`
+        : "";
     return `
-      <section class="coach" aria-live="polite">
+      <section class="coach" data-coach="${moment.spot}" aria-live="polite">
         <p class="coach-kicker">${escapeHtml(lesson.def.title)}</p>
-        <p>${escapeHtml(say)}</p>
-        ${alertText ? `<p class="coach-hint">${escapeHtml(alertText)}</p>` : ""}
+        <p>${escapeHtml(moment.say)}</p>
+        ${alertText && !moment.showNext && moment.spot !== "done" ? `<p class="coach-hint">${escapeHtml(alertText)}</p>` : ""}
         ${next}
       </section>`;
   }
@@ -1191,13 +1389,84 @@ export function mount(root: HTMLElement): void {
       </div>`;
   }
 
+  function placeCoach(): void {
+    const coach = root.querySelector<HTMLElement>(".coach");
+    if (!coach) return;
+    if (window.innerWidth <= 720) {
+      coach.classList.add("coach-pinned", "coach-no-arrow");
+      coach.style.left = "";
+      coach.style.top = "";
+      return;
+    }
+    coach.classList.remove("coach-pinned");
+    const width = coach.offsetWidth;
+    const height = coach.offsetHeight;
+    const targets = Array.from(root.querySelectorAll<HTMLElement>("[data-spot].lit"));
+    const felt = root.querySelector<HTMLElement>(".felt");
+    if (targets.length === 0 && felt) {
+      const box = felt.getBoundingClientRect();
+      coach.style.left = `${Math.round(box.left + (box.width - width) / 2)}px`;
+      coach.style.top = `${Math.round(box.top + (box.height - height) / 2)}px`;
+      coach.classList.add("coach-no-arrow");
+      return;
+    }
+    const target = targets.reduce((best, item) => (item.getBoundingClientRect().left < best.getBoundingClientRect().left ? item : best));
+    const box = target.getBoundingClientRect();
+    const gap = 16;
+    const spots = [
+      { left: box.left + box.width / 2 - width / 2, top: box.top - height - gap },
+      { left: box.left + box.width / 2 - width / 2, top: box.bottom + gap },
+      { left: box.right + gap, top: box.top + box.height / 2 - height / 2 },
+      { left: box.left - width - gap, top: box.top + box.height / 2 - height / 2 },
+    ].map((spot) => ({
+      left: clamp(spot.left, 8, window.innerWidth - width - 8),
+      top: clamp(spot.top, 8, window.innerHeight - height - 8),
+    }));
+    const placed = spots
+      .map((spot) => ({ ...spot, hit: overlaps(spot, width, height, box) }))
+      .sort((a, b) => Number(a.hit) - Number(b.hit))[0]!;
+    coach.style.left = `${Math.round(placed.left)}px`;
+    coach.style.top = `${Math.round(placed.top)}px`;
+    coach.classList.remove("coach-no-arrow");
+    const placedBox = { left: placed.left, top: placed.top, right: placed.left + width, bottom: placed.top + height, width, height };
+    const tx = box.left + box.width / 2;
+    const ty = box.top + box.height / 2;
+    const cx = placedBox.left + width / 2;
+    const cy = placedBox.top + height / 2;
+    const dx = tx - cx;
+    const dy = ty - cy;
+    let arrowX = width / 2 - 7;
+    let arrowY = -8;
+    let turn = "-135deg";
+    if (Math.abs(dx) > Math.abs(dy)) {
+      arrowY = clamp(ty - placedBox.top - 7, 10, height - 24);
+      if (dx > 0) {
+        arrowX = width - 6;
+        turn = "-45deg";
+      } else {
+        arrowX = -8;
+        turn = "135deg";
+      }
+    } else {
+      arrowX = clamp(tx - placedBox.left - 7, 10, width - 24);
+      if (dy > 0) {
+        arrowY = height - 6;
+        turn = "45deg";
+      }
+    }
+    coach.style.setProperty("--arrow-x", `${Math.round(arrowX)}px`);
+    coach.style.setProperty("--arrow-y", `${Math.round(arrowY)}px`);
+    coach.style.setProperty("--arrow-turn", turn);
+  }
+
   function overlayHtml(game: GameState): string {
     if (lesson) return "";
     const result = game.lastResult;
     if (!result || result.passed) return "";
     if (game.phase !== "handComplete" && game.phase !== "matchComplete") return "";
-    const bidder = result.bidder == null ? "" : seatWord(result.bidder, me, names);
+    const bidder = result.bidder == null ? "" : seatWord(result.bidder, names);
     const trump = result.trump ? trumpName(result.trump) : "";
+    const nello = result.trump?.kind === "nello";
     const made = result.made ? "Made." : "Set.";
     const mine = teamOf(me);
     const usAward = result.awarded[mine];
@@ -1211,13 +1480,18 @@ export function mount(root: HTMLElement): void {
           ? "Your team wins the match."
           : `${opponentsLabel()} win the match.`;
     const next =
-      game.phase === "matchComplete"
-        ? `<button type="button" class="primary" data-act="new-match">New match</button>`
-        : `<button type="button" class="primary" data-act="next">Next hand</button>`;
+      role === "guest"
+        ? `<p class="dock-note">${game.phase === "matchComplete" ? "Waiting for the host to start the next match." : "Waiting for the host to start the next hand."}</p>`
+        : game.phase === "matchComplete"
+          ? `<button type="button" class="primary" data-act="new-match">New match</button>`
+          : `<button type="button" class="primary" data-act="next">Next hand</button>`;
+    const kicker = nello
+      ? `${bidder} · Nello`
+      : `${bidder} · ${String(result.bid)} · ${trump}`;
     return `
       <div class="overlay" role="dialog" aria-label="Hand result">
         <div class="result-card">
-          <p class="result-kicker">${escapeHtml(bidder)} · ${escapeHtml(String(result.bid))} · ${escapeHtml(trump)}</p>
+          <p class="result-kicker">${escapeHtml(kicker)}</p>
           <h2>${made}</h2>
           <p>Captured this hand: your team ${result.captured[mine]}, opponents ${result.captured[mine === 0 ? 1 : 0]}.</p>
           <p>Awarded: your team ${usAward} ${ourUnit}, opponents ${themAward} ${theirUnit}.</p>
@@ -1249,7 +1523,7 @@ export function mount(root: HTMLElement): void {
 
   function guestPlaceLine(): string {
     const partner = names[partnerOf(me)] || "a bot";
-    return `You are sitting ${seatTitle(me)}. Your partner is ${partner}.`;
+    return `You are ${seatTitle(me)}. Your partner is ${partner}.`;
   }
 
   function personAt(seat: Seat): string {
@@ -1299,7 +1573,15 @@ export function mount(root: HTMLElement): void {
 }
 
 function seatTitle(seat: Seat): string {
-  return (["South", "West", "North", "East"] as const)[seat];
+  return `Player ${seat + 1}`;
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
+}
+
+function overlaps(spot: { left: number; top: number }, width: number, height: number, box: DOMRect): boolean {
+  return !(spot.left + width < box.left || spot.left > box.right || spot.top + height < box.top || spot.top > box.bottom);
 }
 
 function rememberStorage(): Storage | null {
@@ -1348,17 +1630,10 @@ function countOutLine(game: GameState): string {
 function handBanner(game: GameState, viewer: Seat, names: Names): string {
   if (game.phase === "bidding") {
     const high = game.highBid == null ? "no bid yet" : `high bid ${game.highBid}`;
-    return `${seatWord(game.shaker, viewer, names)} shook · ${high}`;
+    return `${seatWord(game.shaker, names)} shook · ${high}`;
   }
   const need = needLine(game, viewer);
-  return [contractLine(game, viewer, names), need].filter(Boolean).join(" · ");
-}
-
-function waitingNote(game: GameState, viewer: Seat, names: Names): string {
-  if (game.phase === "trickComplete") return "Gathering the trick.";
-  if (game.phase === "handComplete" && game.lastResult?.passed) return "No one bid. Shaking again.";
-  if (game.turn != null && game.turn !== viewer) return `${seatWord(game.turn, viewer, names)} is deciding.`;
-  return "Watch the table.";
+  return [contractLine(game, names), need].filter(Boolean).join(" · ");
 }
 
 function stateFromView(view: PlayerView): GameState {
@@ -1406,8 +1681,49 @@ function cleanName(value: string): string {
 function parseButton(key: string): Trump {
   if (key === "doubles") return { kind: "doubles" };
   if (key === "followMe") return { kind: "followMe" };
+  if (key === "nello") return { kind: "nello" };
   const suit = Number(key.slice("suit:".length));
   return { kind: "suit", suit };
+}
+
+function shownPoints(game: GameState, team: 0 | 1): number {
+  let points = game.handPoints[team];
+  if (game.phase === "trickComplete" && game.turn != null && teamOf(game.turn) === team && game.trump?.kind !== "nello") {
+    points += trickPoints(game.currentTrick);
+  }
+  return points;
+}
+
+function bidMeterHtml(game: GameState, team: 0 | 1, viewer: Seat): string {
+  if (game.highBid == null || game.highBidder == null) return "";
+  if (game.phase === "bidding" || game.phase === "handComplete" || game.phase === "matchComplete") return "";
+  const bidderTeam = teamOf(game.highBidder);
+  const nello = game.trump?.kind === "nello";
+  let fill = 0;
+  let mark = 0;
+  let label = "";
+  if (nello) {
+    const tricks = game.completedTricks.filter((trick) => teamOf(trick.winner) === team).length;
+    fill = tricks / 7;
+    mark = team === bidderTeam ? 1 / 7 : 1;
+    label = team === bidderTeam ? "Any trick sets nello" : "Take every trick";
+  } else {
+    const need = Math.min(game.highBid, 42);
+    const points = shownPoints(game, team);
+    fill = points / 42;
+    if (team === bidderTeam) {
+      mark = need / 42;
+      label = `${need} to make`;
+    } else {
+      const setAt = game.highBid >= 42 ? 1 : 42 - need + 1;
+      mark = Math.min(setAt, 42) / 42;
+      label = `${setAt} to set`;
+    }
+  }
+  const width = Math.max(0, Math.min(100, fill * 100));
+  const left = Math.max(0, Math.min(100, mark * 100));
+  const tone = team === teamOf(viewer) ? "us" : "them";
+  return `<div class="bid-meter ${tone}" title="${escapeHtml(label)}" aria-label="${escapeHtml(label)}"><span class="bid-meter-fill" style="width:${width.toFixed(2)}%"></span><span class="bid-meter-mark" style="left:${left.toFixed(2)}%"></span></div>`;
 }
 
 function escapeHtml(value: string): string {

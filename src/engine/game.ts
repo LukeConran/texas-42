@@ -16,6 +16,7 @@ import {
   type Trump,
   legalPlays,
   sameTrump,
+  trickSize,
   trumpName,
   winningIndex,
 } from "./trump";
@@ -55,7 +56,7 @@ export interface HandResult {
   bidder: Seat | null;
   trump: Trump | null;
   made: boolean | null;
-  /** Points captured in tricks this hand, before the contract payout. Always sums to 42 when played. */
+  /** Points captured in tricks this hand, before the contract payout. A hand that ends early can total less than 42. */
   captured: [number, number];
   awarded: [number, number];
   /** Set when this hand pushed a team to the match target. */
@@ -88,6 +89,7 @@ export type Action =
   | { type: "bid"; amount: number | "pass" }
   | { type: "declareTrump"; trump: Trump }
   | { type: "play"; domino: Domino }
+  | { type: "layDown" }
   | { type: "acknowledgeTrick" }
   | { type: "nextHand" };
 
@@ -153,6 +155,8 @@ export function apply(state: GameState, action: Action): GameState {
       return applyTrump(state, action.trump);
     case "play":
       return applyPlay(state, action.domino);
+    case "layDown":
+      return applyLayDown(state);
     case "acknowledgeTrick":
       return applyAcknowledge(state);
     case "nextHand":
@@ -189,6 +193,7 @@ export function observe(state: GameState, seat: Seat): PlayerView {
               state.settings.openingLeadMustBeTrump && state.completedTricks.length === 0 && state.currentTrick.length === 0,
           }).map((d) => ({ ...d }))
         : [],
+    mayLayDown: canLayDown(state, seat),
     settings: state.settings,
     handNumber: state.handNumber,
     lastResult: state.lastResult,
@@ -214,6 +219,8 @@ export interface PlayerView {
   scores: [number, number];
   legalBids: Array<number | "pass">;
   legalPlays: Domino[];
+  /** True when this seat is on lead and cannot lose a remaining trick. */
+  mayLayDown: boolean;
   settings: MatchSettings;
   handNumber: number;
   lastResult: HandResult | null;
@@ -242,7 +249,7 @@ function applyBid(state: GameState, amount: number | "pass"): GameState {
   const next = nextSeat(seat);
   const biddingDone = next === state.bidLeader;
   const spoken =
-    amount === "pass" ? actor(seat, "passes", "pass") : `${actor(seat, "bids", "bid")} ${bidLabel(amount)}`;
+    amount === "pass" ? actor(seat, "passes") : `${actor(seat, "bids")} ${bidLabel(amount)}`;
   const log = appendLog(state.log, spoken);
 
   if (!biddingDone) {
@@ -279,19 +286,27 @@ function applyBid(state: GameState, amount: number | "pass"): GameState {
     highBidder,
     phase: "trump",
     turn: highBidder,
-    log: appendLog(log, `${actor(highBidder, "won", "won")} the bid at ${bidLabel(highBid)}.`),
+    log: appendLog(log, `${actor(highBidder, "won")} the bid at ${bidLabel(highBid)}.`),
   };
 }
 
 function applyTrump(state: GameState, trump: Trump): GameState {
   if (state.phase !== "trump" || state.turn == null) throw new Error("Trump is not being named");
   if (!isKnownTrump(trump)) throw new Error("Unknown trump");
+  const hands = state.hands.map((hand) => hand.slice()) as GameState["hands"];
+  let log = appendLog(state.log, `${actor(state.turn, "calls")} ${trumpName(trump)}.`);
+  if (trump.kind === "nello") {
+    const partner = partnerOf(state.turn);
+    hands[partner] = [];
+    log = appendLog(log, `${seatName(partner)} puts their tiles away.`);
+  }
   return {
     ...state,
+    hands,
     trump,
     phase: "playing",
     currentTrick: [],
-    log: appendLog(state.log, `${actor(state.turn, "calls", "call")} ${trumpName(trump)}.`),
+    log,
   };
 }
 
@@ -323,10 +338,10 @@ function applyPlay(state: GameState, domino: Domino): GameState {
     i === seat ? h.filter((d) => !sameDomino(d, domino)) : h.slice(),
   ) as GameState["hands"];
   const currentTrick = [...state.currentTrick, { player: seat, domino: { ...match } }];
-  const log = appendLog(state.log, `${actor(seat, "plays", "play")} ${dominoLabel(match)}`);
+  const log = appendLog(state.log, `${actor(seat, "plays")} ${dominoLabel(match)}`);
 
-  if (currentTrick.length < 4) {
-    return { ...state, hands, currentTrick, turn: nextSeat(seat), log };
+  if (currentTrick.length < trickSize(state.trump)) {
+    return { ...state, hands, currentTrick, turn: nextPlayer(state, seat), log };
   }
 
   const winner = currentTrick[winningIndex(currentTrick.map((p) => p.domino), state.trump)]!.player;
@@ -337,7 +352,7 @@ function applyPlay(state: GameState, domino: Domino): GameState {
     currentTrick,
     phase: "trickComplete",
     turn: winner,
-    log: appendLog(log, `${actor(winner, "takes", "take")} the trick for ${points}.`),
+    log: appendLog(log, `${actor(winner, "takes")} the trick for ${points}.`),
   };
 }
 
@@ -354,7 +369,7 @@ function applyAcknowledge(state: GameState): GameState {
     { plays: state.currentTrick, winner, points },
   ];
 
-  if (completedTricks.length < 7) {
+  if (completedTricks.length < 7 && !contractDecided(state, handPoints, completedTricks)) {
     return {
       ...state,
       phase: "playing",
@@ -385,14 +400,14 @@ export function concede(state: GameState, seat: Seat): GameState {
     awarded: previous?.awarded ?? [0, 0],
     matchWinner: winner,
   };
-  const winners = winner === 0 ? "South and North" : "West and East";
+  const winners = winner === 0 ? "Player 1 and Player 3" : "Player 2 and Player 4";
   return {
     ...state,
     phase: "matchComplete",
     turn: null,
     scores,
     lastResult: result,
-    log: appendLog(state.log, `${actor(seat, "resigns", "resign")}. ${winners} win the match.`),
+    log: appendLog(state.log, `${actor(seat, "resigns")}. ${winners} win the match.`),
   };
 }
 
@@ -405,6 +420,54 @@ function applyNextHand(state: GameState): GameState {
   });
 }
 
+function applyLayDown(state: GameState): GameState {
+  if (state.turn == null || !canLayDown(state, state.turn)) {
+    throw new Error("This hand cannot be laid down");
+  }
+  const seat = state.turn;
+  const remaining = state.hands.flat();
+  const points = state.hands[seat].length + remaining.reduce((sum, domino) => sum + countValue(domino), 0);
+  const handPoints: [number, number] = [...state.handPoints];
+  handPoints[teamOf(seat)] += points;
+  return finishHand(
+    { ...state, log: appendLog(state.log, `${actor(seat, "lays")} down the hand.`) },
+    handPoints,
+    state.completedTricks,
+  );
+}
+
+/** On lead, with every remaining tile winning the trick it would start. */
+export function canLayDown(state: GameState, seat: Seat): boolean {
+  if (state.phase !== "playing" || state.turn !== seat || state.trump == null) return false;
+  if (state.currentTrick.length !== 0 || state.trump.kind === "nello") return false;
+  const hand = state.hands[seat];
+  if (hand.length === 0) return false;
+  if (state.hands.some((cards) => cards.length !== hand.length)) return false;
+  const trump = state.trump;
+  const others = state.hands.flatMap((cards, index) => (index === seat ? [] : cards));
+  return hand.every((domino) => !others.some((other) => winningIndex([domino, other], trump) === 1));
+}
+
+function nextPlayer(state: GameState, seat: Seat): Seat {
+  let next = nextSeat(seat);
+  if (state.trump?.kind === "nello" && state.highBidder != null && next === partnerOf(state.highBidder)) {
+    next = nextSeat(next);
+  }
+  return next;
+}
+
+function contractDecided(state: GameState, handPoints: [number, number], tricks: CompletedTrick[]): boolean {
+  if (state.highBid == null || state.highBidder == null) return false;
+  if (state.trump?.kind === "nello") {
+    return tricks.some((trick) => teamOf(trick.winner) === teamOf(state.highBidder!));
+  }
+  const need = Math.min(state.highBid, 42);
+  const have = handPoints[teamOf(state.highBidder)];
+  const defenders = handPoints[(1 - teamOf(state.highBidder)) as Team];
+  if (have >= need) return true;
+  return defenders > 42 - need;
+}
+
 function finishHand(
   state: GameState,
   captured: [number, number],
@@ -414,7 +477,11 @@ function finishHand(
   const bidder = state.highBidder!;
   const bidderTeam = teamOf(bidder);
   const defenderTeam = (1 - bidderTeam) as Team;
-  const payout = scoreContract(bid, captured[bidderTeam], captured[defenderTeam], state.settings.scoringMode);
+  const nello = state.trump?.kind === "nello";
+  const callerWon = completedTricks.some((trick) => teamOf(trick.winner) === bidderTeam);
+  const payout = nello
+    ? scoreNello(callerWon, state.settings.scoringMode)
+    : scoreContract(bid, captured[bidderTeam], captured[defenderTeam], state.settings.scoringMode);
   const awarded: [number, number] = [0, 0];
   awarded[bidderTeam] = payout.bidderAward;
   awarded[defenderTeam] = payout.defenderAward;
@@ -432,9 +499,8 @@ function finishHand(
     matchWinner,
   };
 
-  const outcome = payout.made
-    ? `${actor(bidder, "makes", "make")} ${bidLabel(bid)}.`
-    : `${actor(bidder, "is set", "are set")} on ${bidLabel(bid)}.`;
+  const bidText = nello ? "nello" : bidLabel(bid);
+  const outcome = payout.made ? `${actor(bidder, "makes")} ${bidText}.` : `${actor(bidder, "is set")} on ${bidText}.`;
   const awardLine =
     state.settings.scoringMode === "marks"
       ? `Marks: your team ${awarded[0]} ${scoreUnit("marks", awarded[0])}, opponents ${awarded[1]} ${scoreUnit("marks", awarded[1])}.`
@@ -473,6 +539,18 @@ export function scoreContract(
   }
   if (made) return { made, bidderAward: bidderPoints, defenderAward: defenderPoints };
   return { made, bidderAward: 0, defenderAward: defenderPoints + bid };
+}
+
+/** Nello ignores the number bid. One mark, or 42 points, goes to the side that wins it. */
+export function scoreNello(
+  callerWonATrick: boolean,
+  mode: ScoringMode,
+): { made: boolean; bidderAward: number; defenderAward: number } {
+  const made = !callerWonATrick;
+  if (mode === "marks") {
+    return { made, bidderAward: made ? 1 : 0, defenderAward: made ? 0 : 1 };
+  }
+  return { made, bidderAward: made ? 42 : 0, defenderAward: made ? 0 : 42 };
 }
 
 function matchVictor(scores: [number, number], target: number): Team | null {
@@ -520,7 +598,7 @@ function dealHand(state: GameState): GameState {
     lastResult: null,
     log: appendLog(
       state.log,
-      `Hand ${handNumber}. ${actor(state.shaker, "shook", "shook")}. ${actor(bidLeader, "bids", "bid")} first.`,
+      `Hand ${handNumber}. ${actor(state.shaker, "shook")}. ${actor(bidLeader, "bids")} first.`,
     ),
   };
 }
@@ -548,12 +626,12 @@ export function findDomino(hand: Domino[], key: string): Domino | undefined {
 }
 
 function isKnownTrump(trump: Trump): boolean {
-  if (trump.kind === "doubles" || trump.kind === "followMe") return true;
+  if (trump.kind === "doubles" || trump.kind === "followMe" || trump.kind === "nello") return true;
   return trump.kind === "suit" && trump.suit >= 0 && trump.suit <= 6 && Number.isInteger(trump.suit);
 }
 
-function actor(seat: Seat, third: string, second: string): string {
-  return seat === 0 ? `You ${second}` : `${seatName(seat)} ${third}`;
+function actor(seat: Seat, verb: string): string {
+  return `${seatName(seat)} ${verb}`;
 }
 
 function appendLog(log: string[], line: string): string[] {

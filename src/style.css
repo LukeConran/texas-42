@@ -183,9 +183,21 @@ h1, h2, h3, .brand, .scoreline strong, .result-card h2 {
 
 .trick-wrap { text-align: center; min-width: 0; }
 .status {
-  margin: 0 0 6px;
-  min-height: 2.6em;
-  font-size: 0.98rem;
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  z-index: 2;
+  width: min(190px, 54%);
+  margin: 0;
+  padding: 7px 12px;
+  transform: translate(-50%, -50%);
+  border-radius: 999px;
+  background: rgba(12, 59, 44, 0.92);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.2);
+  font-size: 1.05rem;
+  font-weight: 600;
+  line-height: 1.25;
+  pointer-events: none;
 }
 .contract { margin: 6px 0 0; color: var(--muted); font-size: 0.84rem; min-height: 1.2em; }
 .trick {
@@ -268,22 +280,53 @@ h1, h2, h3, .brand, .scoreline strong, .result-card h2 {
 .bone.marked { box-shadow: 0 0 0 3px var(--gold); }
 .your-hand .bone.marked { transform: translateY(-12px); }
 .coach {
-  margin: 8px 18px 0;
-  background: #2a211b;
-  border: 1px solid rgba(230, 194, 122, 0.45);
+  position: fixed;
+  z-index: 25;
+  width: min(340px, calc(100vw - 24px));
+  background: var(--ivory);
+  color: var(--ink);
+  font-size: 1.12rem;
+  line-height: 1.35;
   border-radius: 16px;
-  padding: 12px 16px;
+  padding: 14px 16px 16px;
+  box-shadow: var(--shadow);
+  border: 1px solid var(--gold);
 }
 .coach-kicker {
   margin: 0;
-  color: var(--gold);
+  color: var(--gold-deep);
   font-size: 0.75rem;
   letter-spacing: 0.08em;
   text-transform: uppercase;
 }
-.coach p { margin: 4px 0 0; }
-.coach-hint { color: var(--clay); }
+.coach p { margin: 8px 0 0; }
+.coach .primary { margin-top: 12px; }
+.coach .ghost {
+  color: var(--ink);
+  border-color: rgba(28, 24, 20, 0.35);
+}
+.coach .menu-actions { margin-top: 12px; }
+.coach-hint { color: #8a3b24; }
+.coach::after {
+  content: "";
+  position: absolute;
+  left: var(--arrow-x, calc(50% - 7px));
+  top: var(--arrow-y, -8px);
+  width: 14px;
+  height: 14px;
+  background: var(--ivory);
+  border-right: 1px solid var(--gold);
+  border-bottom: 1px solid var(--gold);
+  transform: rotate(var(--arrow-turn, -135deg));
+}
+.coach.coach-no-arrow::after { display: none; }
+[data-spot].lit {
+  outline: 3px solid var(--gold);
+  outline-offset: 4px;
+  border-radius: 16px;
+}
 .bone.locked { opacity: 0.5; pointer-events: none; }
+.your-hand .bone.locked { pointer-events: auto; cursor: grab; }
 button.tile {
   padding: 0;
   appearance: none;
@@ -295,7 +338,8 @@ button.tile:disabled {
   cursor: default;
 }
 .your-hand .tile:not(:disabled):hover { transform: translateY(-8px); }
-.your-hand .tile { transition: transform 0.15s ease; }
+.your-hand .tile { transition: transform 0.15s ease; touch-action: none; cursor: grab; }
+.your-hand .tile.dragging { position: relative; z-index: 3; transform: translateY(-18px); cursor: grabbing; }
 .your-hand .tile.selected { transform: translateY(-14px); box-shadow: 0 0 0 2px #fff, 0 12px 18px rgba(0, 0, 0, 0.35); }
 .just-played { animation: drop 0.28s ease-out; }
 @keyframes drop {
@@ -369,7 +413,32 @@ button.tile:disabled {
   border-radius: 16px;
   padding: 12px;
 }
-.won header { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; margin-bottom: 8px; }
+.won header { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; margin-bottom: 6px; }
+.bid-meter {
+  position: relative;
+  height: 4px;
+  margin: 0 0 8px;
+  background: rgba(255, 255, 255, 0.14);
+  border-radius: 99px;
+}
+.bid-meter-fill {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  border-radius: 99px;
+}
+.bid-meter.us .bid-meter-fill { background: #7eb6ff; }
+.bid-meter.them .bid-meter-fill { background: #e06a5c; }
+.bid-meter-mark {
+  position: absolute;
+  top: -3px;
+  width: 2px;
+  height: 10px;
+  background: #fff;
+  border-radius: 1px;
+  transform: translateX(-1px);
+}
 .won h2 { margin: 0; font-size: 1.02rem; }
 .won header span { color: var(--muted); font-variant-numeric: tabular-nums; }
 .won.theirs h2 { color: #ffc7b2; }
@@ -484,19 +553,53 @@ button.tile:disabled {
   display: flex;
   flex-direction: column;
 }
+.menu-room:has(.menu-layout:not(.with-aside)) {
+  position: relative;
+}
+.menu-room:has(.menu-layout:not(.with-aside)) > .topbar {
+  position: absolute;
+  inset: 0 0 auto 0;
+  z-index: 2;
+}
 .menu-layout {
   display: grid;
-  grid-template-columns: minmax(280px, 620px);
+  grid-template-columns: min(440px, 100%);
   align-content: center;
   justify-content: center;
   flex: 1;
   gap: 18px;
-  padding: 24px 18px 48px;
+  width: min(440px, 100%);
+  margin: 0 auto;
+  padding: 80px 18px;
+  box-sizing: border-box;
+}
+.menu-layout:not(.with-aside) {
+  min-height: 100vh;
+}
+.menu-layout.with-aside {
+  grid-template-columns: minmax(0, 440px) minmax(240px, 320px);
+  width: min(780px, 100%);
+  align-content: start;
+  min-height: 0;
+  padding: 8px 18px 48px;
 }
 .menu-layout:has(.rules-card) {
-  grid-template-columns: minmax(0, 620px) minmax(260px, 420px);
+  grid-template-columns: minmax(0, 440px) minmax(260px, 420px);
+  width: min(880px, 100%);
 }
 .menu-card h1 { margin: 0 0 8px; font-size: clamp(2rem, 4vw, 3.1rem); line-height: 1.05; }
+.menu-card.sheet h1 { font-size: 1.7rem; }
+.lobby-chat .chat {
+  display: flex;
+  flex-direction: column;
+  max-height: min(520px, calc(100vh - 120px));
+  margin: 0;
+}
+.lobby-chat .chat-log {
+  flex: 1;
+  min-height: 180px;
+  max-height: none;
+}
 .front {
   flex: 1;
   display: flex;
@@ -631,17 +734,30 @@ legend { margin-bottom: 8px; color: var(--gold); }
 .close-rules { float: right; }
 
 @media (max-width: 980px) {
-  .play, .menu-layout { grid-template-columns: 1fr; }
+  .play, .menu-layout, .menu-layout.with-aside { grid-template-columns: 1fr; }
+  .menu-layout, .menu-layout.with-aside { width: min(440px, 100%); }
+  .lobby-chat .chat { max-height: 320px; }
   .rules-pop { left: 12px; right: 12px; width: auto; }
   .middle { grid-template-columns: 86px minmax(0, 1fr) 86px; }
   .trick { height: 280px; }
 }
 
 @media (max-width: 720px) {
+  .coach {
+    top: auto;
+    right: 12px;
+    bottom: 12px;
+    left: 12px;
+    width: auto;
+    transform: none;
+  }
+  .coach::after { display: none; }
+  .room:has(.coach) .play { padding-bottom: 230px; }
   .topbar { padding-inline: 12px; }
   .scoreline { order: 3; width: 100%; justify-content: center; }
   .bone-lg { width: 48px; height: 90px; }
   .middle { grid-template-columns: 72px minmax(0, 1fr) 72px; }
+  .status { width: min(132px, 48%); font-size: 0.92rem; padding: 5px 8px; }
   .seat:not(.open) .bone-sm { width: 28px; height: 50px; }
   .seat-north .seat-stack { min-height: 50px; }
   .seat-west .seat-stack,

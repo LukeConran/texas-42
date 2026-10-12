@@ -4,11 +4,13 @@ import { type Domino, isDouble } from "./domino";
  * Trump named by the high bidder before the opening lead.
  * `suit` 0 is blanks. `doubles` makes the seven doubles the trump suit.
  * `followMe` is no-trump: the higher end of the led tile is the suit.
+ * `nello` is also no-trump. The bidder's partner sits out, and the bidder must lose every trick.
  */
 export type Trump =
   | { kind: "suit"; suit: number }
   | { kind: "doubles" }
-  | { kind: "followMe" };
+  | { kind: "followMe" }
+  | { kind: "nello" };
 
 export type TileClass = {
   isTrump: boolean;
@@ -44,12 +46,14 @@ export function sameTrump(a: Trump, b: Trump): boolean {
 export function trumpName(trump: Trump): string {
   if (trump.kind === "doubles") return "Doubles";
   if (trump.kind === "followMe") return "No Trump";
+  if (trump.kind === "nello") return "Nello";
   return SUIT_CALLS[trump.suit] ?? String(trump.suit);
 }
 
 export function parseTrump(key: string): Trump {
   if (key === "doubles") return { kind: "doubles" };
   if (key === "followMe") return { kind: "followMe" };
+  if (key === "nello") return { kind: "nello" };
   if (key.startsWith("suit:")) {
     const suit = Number(key.slice(5));
     if (suit >= 0 && suit <= 6) return { kind: "suit", suit };
@@ -67,7 +71,7 @@ export function classify(d: Domino, trump: Trump): TileClass {
     return { isTrump: false, suit: d.hi, rank: d.lo };
   }
 
-  if (trump.kind === "followMe") {
+  if (trump.kind === "followMe" || trump.kind === "nello") {
     if (isDouble(d)) return { isTrump: false, suit: d.hi, rank: 7 };
     return { isTrump: false, suit: d.hi, rank: d.lo };
   }
@@ -109,7 +113,7 @@ export function legalPlays(
 ): Domino[] {
   if (hand.length === 0) return [];
   if (trick.length === 0) {
-    if (options?.mustLeadTrump && trump.kind !== "followMe") {
+    if (options?.mustLeadTrump && trump.kind !== "followMe" && trump.kind !== "nello") {
       const trumps = hand.filter((d) => classify(d, trump).isTrump);
       if (trumps.length > 0) return trumps;
     }
@@ -164,8 +168,13 @@ function standing(
 }
 
 /** Every rank that exists in a trump suit, highest first. */
+/** Cards in one trick. Nello is three, because the bidder's partner has put their hand away. */
+export function trickSize(trump: Trump | null): number {
+  return trump?.kind === "nello" ? 3 : 4;
+}
+
 export function trumpRankOrder(trump: Trump): number[] {
-  if (trump.kind === "followMe") return [];
+  if (trump.kind === "followMe" || trump.kind === "nello") return [];
   if (trump.kind === "doubles") return [6, 5, 4, 3, 2, 1, 0];
   const offs = [6, 5, 4, 3, 2, 1, 0].filter((k) => k !== trump.suit);
   return [7, ...offs];

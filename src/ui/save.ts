@@ -5,11 +5,14 @@ const SAVE_KEY = "texas42.table";
 
 const PHASES: readonly Phase[] = ["bidding", "trump", "playing", "trickComplete", "handComplete", "matchComplete"];
 
+export type SavedBotLevel = "easy" | "medium" | "hard";
+
 export interface LocalSave {
   kind: "local";
   version: 1;
   state: GameState;
   pace: "relaxed" | "normal" | "fast";
+  botLevel: SavedBotLevel;
   me: Seat;
   names: [string | null, string | null, string | null, string | null];
   wasOnline: boolean;
@@ -60,6 +63,7 @@ function readGuest(record: Record<string, unknown>): GuestSave | null {
 function readLocal(record: Record<string, unknown>): LocalSave | null {
   if (record.pace !== "relaxed" && record.pace !== "normal" && record.pace !== "fast") return null;
   if (!isSeat(record.me) || typeof record.wasOnline !== "boolean") return null;
+  const botLevel = record.botLevel === "easy" || record.botLevel === "hard" ? record.botLevel : "medium";
   if (!Array.isArray(record.names) || record.names.length !== 4) return null;
   const names = record.names.map((item) => {
     if (item == null) return null;
@@ -75,10 +79,15 @@ function readLocal(record: Record<string, unknown>): LocalSave | null {
     version: 1,
     state,
     pace: record.pace,
+    botLevel,
     me: record.me,
     names: names as LocalSave["names"],
     wasOnline: record.wasOnline,
   };
+}
+
+function isNello(value: unknown): boolean {
+  return Boolean(value && typeof value === "object" && (value as { kind?: unknown }).kind === "nello");
 }
 
 function isSeat(value: unknown): value is Seat {
@@ -115,8 +124,11 @@ function isGameState(value: unknown): value is GameState {
     }
   }
   const deck = new Set(createDeck().map(dominoKey));
-  if (keys.size !== deck.size) return false;
   for (const key of keys) if (!deck.has(key)) return false;
+  const nello = isNello(state.trump);
+  if (nello) {
+    if (keys.size !== 21 && keys.size !== deck.size) return false;
+  } else if (keys.size !== deck.size) return false;
   if ((state.phase === "playing" || state.phase === "trickComplete") && !state.trump) return false;
   return true;
 }

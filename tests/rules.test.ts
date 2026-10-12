@@ -1,17 +1,20 @@
 import { describe, expect, it } from "vitest";
 import { BOT_STYLES, chooseAction } from "../src/ai/heuristic";
-import { countValue, createDeck, dominoKey, type Domino } from "../src/engine/domino";
+import { countValue, createDeck, dominoKey, partnerOf, teamOf, type Domino, type Seat } from "../src/engine/domino";
 import {
   apply,
+  canLayDown,
   createMatch,
   defaultSettings,
   legalBidAmounts,
   observe,
   scoreContract,
+  scoreNello,
   trickPoints,
   type GameState,
 } from "../src/engine/game";
 import { classify, legalPlays, trumpName, winningIndex, type Trump } from "../src/engine/trump";
+import { seatWord, teamTag, turnLine } from "../src/ui/text";
 
 const D = (hi: number, lo: number): Domino => ({ hi, lo });
 const fours: Trump = { kind: "suit", suit: 4 };
@@ -240,14 +243,19 @@ describe("a full hand", () => {
       const legal = observe(state, seat).legalPlays;
       state = apply(state, { type: "play", domino: legal[0]! });
     }
-    expect(state.handPoints[0] + state.handPoints[1]).toBe(42);
-    expect(state.completedTricks).toHaveLength(7);
-    const seen = new Set<string>();
-    for (const trick of state.completedTricks) {
-      expect(trick.points).toBe(trickPoints(trick.plays));
-      for (const play of trick.plays) seen.add(dominoKey(play.domino));
+    expect(state.phase).toBe("handComplete");
+    const total = state.handPoints[0] + state.handPoints[1];
+    expect(total).toBeGreaterThan(0);
+    expect(total).toBeLessThanOrEqual(42);
+    if (state.completedTricks.length === 7 && state.completedTricks.every((trick) => trick.plays.length === 4)) {
+      expect(total).toBe(42);
+      const seen = new Set<string>();
+      for (const trick of state.completedTricks) {
+        expect(trick.points).toBe(trickPoints(trick.plays));
+        for (const play of trick.plays) seen.add(dominoKey(play.domino));
+      }
+      expect(seen.size).toBe(28);
     }
-    expect(seen.size).toBe(28);
   });
 
   it("rejects a renege", () => {
@@ -278,8 +286,15 @@ describe("bot matches", () => {
         steps += 1;
         state = stepBot(state);
         if (state.phase === "handComplete" || state.phase === "matchComplete") {
-          if (!state.lastResult?.passed) {
-            expect(state.handPoints[0] + state.handPoints[1]).toBe(42);
+          if (!state.lastResult?.passed && state.lastResult) {
+            const result = state.lastResult;
+            const have = result.captured[teamOf(result.bidder!)];
+            const defenders = result.captured[(1 - teamOf(result.bidder!)) as 0 | 1];
+            const need = Math.min(result.bid!, 42);
+            expect(have + defenders).toBeLessThanOrEqual(42);
+            expect(have + defenders).toBeGreaterThan(0);
+            if (result.made) expect(have).toBeGreaterThanOrEqual(need);
+            else expect(defenders).toBeGreaterThan(42 - need);
           }
         }
       }
@@ -288,6 +303,196 @@ describe("bot matches", () => {
     }
   });
 });
+
+describe("player names", () => {
+  it("uses the same player label for every viewer", () => {
+    expect(seatWord(0)).toBe("Player 1");
+    expect(seatWord(3)).toBe("Player 4");
+    expect(seatWord(1, ["Luke", "Ana", null, null])).toBe("Ana");
+    expect(teamTag([0, 2], ["Luke", "West", "Jordan", null])).toBe("L & J");
+    expect(teamTag([1, 3], [null, null, null, null])).toBe("P2 & P4");
+  });
+
+  it("says your turn only for the viewer", () => {
+    const state = scriptedPlayingHand();
+    expect(turnLine(state, 0)).toBe("Your turn");
+    expect(turnLine(state, 1)).toBe("Player 1's turn");
+    expect(turnLine({ ...state, turn: 2 }, 0, ["Luke", null, null, null])).toBe("Player 3's turn");
+  });
+});
+
+describe("ending a hand early", () => {
+  it("ends when the bidding team has made the bid", () => {
+    let state = trickReady([29, 0], 0);
+    state = apply(state, { type: "acknowledgeTrick" });
+    expect(state.phase).toBe("handComplete");
+    expect(state.lastResult?.made).toBe(true);
+    expect(state.handPoints[0]).toBe(30);
+    expect(state.completedTricks.length).toBeLessThan(7);
+  });
+
+  it("ends when the defenders have set the bid", () => {
+    let state = trickReady([0, 12], 1);
+    state = apply(state, { type: "acknowledgeTrick" });
+    expect(state.phase).toBe("handComplete");
+    expect(state.lastResult?.made).toBe(false);
+    expect(state.handPoints[1]).toBe(13);
+  });
+
+  it("keeps a bid of 42 going until a defender scores or the bidder takes all 42", () => {
+    let going = trickReady([30, 0], 0, 42);
+    going = apply(going, { type: "acknowledgeTrick" });
+    expect(going.phase).toBe("playing");
+    expect(going.handPoints[0]).toBe(31);
+
+    let set = trickReady([20, 0], 1, 42);
+    set = apply(set, { type: "acknowledgeTrick" });
+    expect(set.phase).toBe("handComplete");
+    expect(set.lastResult?.made).toBe(false);
+  });
+});
+
+describe("nello", () => {
+  it("sits the partner out and scores one mark when the caller takes a trick", () => {
+    let state = scriptedPlayingHand();
+    state = {
+      ...state,
+      phase: "trump",
+      trump: null,
+      turn: 0,
+      settings: { ...state.settings, scoringMode: "marks", target: 7 },
+      hands: [
+        [D(6, 6), D(5, 0), D(4, 0), D(3, 0), D(2, 0), D(1, 0), D(4, 1)],
+        [D(5, 4), D(5, 3), D(5, 2), D(4, 3), D(4, 2), D(3, 2), D(3, 1)],
+        [D(0, 0), D(1, 1), D(2, 2), D(3, 3), D(4, 4), D(5, 5), D(2, 1)],
+        [D(6, 5), D(6, 4), D(6, 3), D(6, 2), D(6, 1), D(6, 0), D(5, 1)],
+      ],
+    };
+    state = apply(state, { type: "declareTrump", trump: { kind: "nello" } });
+    expect(state.hands[partnerOf(0)]).toEqual([]);
+    expect(state.hands[0]).toHaveLength(7);
+    expect(state.turn).toBe(0);
+    state = apply(state, { type: "play", domino: D(6, 6) });
+    state = apply(state, { type: "play", domino: state.hands[state.turn!][0]! });
+    expect(state.turn).toBe(3);
+    state = apply(state, { type: "play", domino: state.hands[3][0]! });
+    expect(state.phase).toBe("trickComplete");
+    expect(state.currentTrick).toHaveLength(3);
+    expect(state.turn).toBe(0);
+    state = apply(state, { type: "acknowledgeTrick" });
+    expect(state.phase).toBe("handComplete");
+    expect(state.lastResult?.made).toBe(false);
+    expect(state.lastResult?.awarded).toEqual([0, 1]);
+  });
+
+  it("makes nello when the caller loses every trick", () => {
+    const losses: GameState["completedTricks"] = Array.from({ length: 6 }, () => ({
+      plays: [
+        { player: 0 as Seat, domino: D(3, 0) },
+        { player: 1 as Seat, domino: D(3, 1) },
+        { player: 3 as Seat, domino: D(3, 2) },
+      ],
+      winner: 1 as Seat,
+      points: 1,
+    }));
+    let state = scriptedPlayingHand();
+    state = {
+      ...state,
+      trump: { kind: "nello" },
+      hands: [[D(2, 0)], [D(2, 2)], [], [D(2, 1)]],
+      completedTricks: losses,
+      handPoints: [0, 6],
+      settings: { ...state.settings, scoringMode: "marks", target: 7 },
+    };
+    state = apply(state, { type: "play", domino: D(2, 0) });
+    state = apply(state, { type: "play", domino: D(2, 2) });
+    state = apply(state, { type: "play", domino: D(2, 1) });
+    state = apply(state, { type: "acknowledgeTrick" });
+    expect(state.phase).toBe("handComplete");
+    expect(state.lastResult?.made).toBe(true);
+    expect(state.lastResult?.awarded).toEqual([1, 0]);
+    expect(scoreNello(false, "points")).toEqual({ made: true, bidderAward: 42, defenderAward: 0 });
+    expect(scoreNello(true, "points").defenderAward).toBe(42);
+  });
+});
+
+describe("laying down", () => {
+  it("awards the remaining points when every lead would win", () => {
+    const state = scriptedPlayingHand();
+    const ready = {
+      ...state,
+      hands: [
+        [D(6, 6), D(6, 5), D(6, 4), D(6, 3), D(6, 2), D(6, 1), D(6, 0)],
+        [D(5, 5), D(5, 4), D(5, 3), D(5, 2), D(5, 1), D(5, 0), D(4, 4)],
+        [D(4, 3), D(4, 2), D(4, 1), D(4, 0), D(3, 3), D(3, 2), D(3, 1)],
+        [D(3, 0), D(2, 2), D(2, 1), D(2, 0), D(1, 1), D(1, 0), D(0, 0)],
+      ] as GameState["hands"],
+    };
+    expect(canLayDown(ready, 0)).toBe(true);
+    expect(observe(ready, 0).mayLayDown).toBe(true);
+    const done = apply(ready, { type: "layDown" });
+    expect(done.phase).toBe("handComplete");
+    expect(done.handPoints[0]).toBe(42);
+    expect(done.lastResult?.made).toBe(true);
+    expect(chooseAction(observe(ready, 0)).type).toBe("layDown");
+  });
+
+  it("refuses a hand that can still lose a trick", () => {
+    const state = scriptedPlayingHand();
+    const beaten = {
+      ...state,
+      hands: [
+        [D(6, 6), D(6, 5), D(6, 4), D(6, 3), D(6, 2), D(6, 1), D(4, 1)],
+        [D(5, 5), D(5, 4), D(5, 3), D(5, 2), D(5, 1), D(5, 0), D(4, 4)],
+        [D(4, 3), D(4, 2), D(4, 0), D(3, 3), D(3, 2), D(3, 1), D(3, 0)],
+        [D(6, 0), D(2, 2), D(2, 1), D(2, 0), D(1, 1), D(1, 0), D(0, 0)],
+      ] as GameState["hands"],
+    };
+    expect(canLayDown(beaten, 0)).toBe(false);
+    const doubles = {
+      ...state,
+      trump: followMe,
+      hands: [
+        [D(6, 6), D(5, 5), D(4, 4), D(3, 3), D(2, 2), D(1, 1), D(0, 0)],
+        [D(6, 5), D(6, 4), D(6, 3), D(6, 2), D(6, 1), D(6, 0), D(5, 4)],
+        [D(5, 3), D(5, 2), D(5, 1), D(5, 0), D(4, 3), D(4, 2), D(4, 1)],
+        [D(4, 0), D(3, 2), D(3, 1), D(3, 0), D(2, 1), D(2, 0), D(1, 0)],
+      ] as GameState["hands"],
+    };
+    expect(canLayDown(doubles, 0)).toBe(true);
+    expect(canLayDown({ ...doubles, trump: { kind: "nello" } }, 0)).toBe(false);
+    expect(canLayDown({ ...doubles, currentTrick: [{ player: 1, domino: D(6, 5) }], turn: 0 }, 0)).toBe(false);
+  });
+});
+
+function trickReady(handPoints: [number, number], winner: Seat, bid = 30): GameState {
+  const state = scriptedPlayingHand();
+  return {
+    ...state,
+    phase: "trickComplete",
+    turn: winner,
+    highBid: bid,
+    handPoints,
+    currentTrick: [
+      { player: 0, domino: D(2, 1) },
+      { player: 1, domino: D(2, 0) },
+      { player: 2, domino: D(3, 1) },
+      { player: 3, domino: D(3, 0) },
+    ],
+    completedTricks: [
+      {
+        plays: [
+          { player: 0, domino: D(4, 2) },
+          { player: 1, domino: D(4, 0) },
+          { player: 2, domino: D(4, 1) },
+          { player: 3, domino: D(5, 1) },
+        ],
+        winner,
+        points: 1,
+      },
+    ],
+  };
+}
 
 function stepBot(state: GameState): GameState {
   if (state.phase === "trickComplete") return apply(state, { type: "acknowledgeTrick" });

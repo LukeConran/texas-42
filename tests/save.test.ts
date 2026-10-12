@@ -30,6 +30,7 @@ describe("saved tables", () => {
       version: 1,
       state,
       pace: "fast",
+      botLevel: "hard",
       me: 2,
       names: ["Ada", null, "Lee", null],
       wasOnline: true,
@@ -41,6 +42,13 @@ describe("saved tables", () => {
     broken.state.hands[1] = [{ hi: 0, lo: 0 }];
     storage.setItem("texas42.table", JSON.stringify(broken));
     expect(readSave(storage)).toBeNull();
+
+    const nello = structuredClone(save);
+    nello.state.trump = { kind: "nello" };
+    nello.state.phase = "playing";
+    nello.state.hands[2] = [];
+    writeSave(storage, nello);
+    expect(readSave(storage)?.kind).toBe("local");
 
     writeSave(storage, { kind: "guest", version: 1, room: "ab12", name: "  Jo  " });
     expect(readSave(storage)).toEqual({ kind: "guest", version: 1, room: "AB12", name: "Jo" });
