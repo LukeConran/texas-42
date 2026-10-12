@@ -43,7 +43,7 @@ const LESSONS: Lesson[] = [
     guide: [
       {
         spot: "marks",
-        say: "These pills are the match. Your team is on the left. First team to 7 marks wins.",
+        say: "These marks are what determine the match. Your team is on the left. First team to 7 marks wins.",
       },
       {
         spot: "partner",
@@ -51,19 +51,19 @@ const LESSONS: Lesson[] = [
       },
       {
         spot: "opponents",
-        say: "West and East are the other team. They bid against you and try to set whatever you name.",
+        say: "West and East are the other team. They bid against you and or try to stop your bids.",
       },
       {
         spot: "trump",
-        say: "Trump shows in this corner. It stays blank until the winning bidder names a suit.",
+        say: "Trump shows in this corner. It stays blank until the winning bidder names their desired trump.",
       },
       {
         spot: "tricks",
-        say: "Won tricks stack in this column. Read them so you know which count tiles are already gone.",
+        say: "Won tricks stack in this column. Read them so you know which count (multiples of 5 and 10) tiles are already gone.",
       },
       {
         spot: "hand",
-        say: "These seven tiles are yours for the hand. When it is your turn, the lesson rings the one to play.",
+        say: "These seven tiles are yours for the hand. When it is your turn, you will see which one to play.",
       },
     ],
     beats: [
@@ -72,7 +72,7 @@ const LESSONS: Lesson[] = [
         kind: "you",
         action: { type: "bid", amount: 30 },
         spot: "bids",
-        say: "East passed. Bid 30. A low bid you can make is the habit: you name trump, and 30 of the 42 points is enough.",
+        say: "East passed. Bid 30. This is the lowest bid, and gives you the best opportunity for success. You are saying \"I think I can win 30 out of the 42 points\".",
         hint: "Bid 30. Passing deals again, and this lesson needs the hand in front of you.",
       },
       { kind: "auto", action: { type: "bid", amount: "pass" } },
@@ -81,14 +81,14 @@ const LESSONS: Lesson[] = [
         kind: "you",
         action: { type: "declareTrump", trump: { kind: "suit", suit: 6 } },
         spot: "trumps",
-        say: "You won the bid. Name sixes. Naming trump is why you took the bid.",
+        say: "You won the bid (everyone else passed). Name sixes. Since you won the bid, you name trump, and get to direct the game.",
         hint: "Name sixes. The next trick is about what follows a five when sixes are trump.",
       },
       {
         kind: "you",
         action: { type: "play", domino: tile("6-1") },
         spot: "hand",
-        say: "Lead the 6-1. In the usual game the opening lead may be any tile. The lesson is the trick after this one.",
+        say: "Lead the 6-1.",
         hint: "Lead the 6-1. It is the six with a one on the other end.",
       },
       { kind: "auto", action: { type: "play", domino: tile("6-2") } },
@@ -100,8 +100,8 @@ const LESSONS: Lesson[] = [
         kind: "you",
         action: { type: "play", domino: tile("5-1") },
         spot: "hand",
-        say: "East led the 5-2. Sixes are trump, so your sixes do not follow a five. The bright tiles are the legal plays. Play the 5-1.",
-        hint: "That tile is legal, but this lesson wants the 5-1. A six does not follow the five.",
+        say: "East led the 5-2. If you have a 5, you must play it. The bright tiles are the legal plays. Play the 5-1.",
+        hint: "That tile is legal, but this lesson wants the 5-1.",
       },
     ],
   },
