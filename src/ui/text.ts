@@ -7,6 +7,7 @@ import { trumpName } from "../engine/trump";
 export function contractLine(state: GameState, names?: Names): string {
   if (state.highBid == null || state.highBidder == null) return "No bid yet";
   const who = seatWord(state.highBidder, names);
+  if (state.trump?.kind === "nello") return `${who} calls Nello`;
   const trump = state.trump ? trumpName(state.trump) : "trump not named";
   return `${who} bid ${bidLabel(state.highBid)} · ${trump}`;
 }
@@ -16,7 +17,7 @@ export function needLine(state: GameState, viewer: Seat = 0): string {
   if (state.phase !== "playing" && state.phase !== "trickComplete" && state.phase !== "trump") return "";
   const bidderTeam = teamOf(state.highBidder);
   if (state.trump?.kind === "nello") {
-    return bidderTeam === teamOf(viewer) ? "Nello. Lose every trick." : "Nello. They must lose every trick.";
+    return bidderTeam === teamOf(viewer) ? "Lose every trick." : "They must lose every trick.";
   }
   if (state.phase === "trump") return "";
   const need = Math.min(state.highBid, 42);

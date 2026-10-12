@@ -185,11 +185,15 @@ h1, h2, h3, .brand, .scoreline strong, .result-card h2 {
   position: absolute;
   left: 50%;
   top: 50%;
-  z-index: 1;
-  width: min(220px, 70%);
+  z-index: 2;
+  width: min(190px, 54%);
   margin: 0;
+  padding: 7px 12px;
   transform: translate(-50%, -50%);
-  font-size: 1.15rem;
+  border-radius: 999px;
+  background: rgba(12, 59, 44, 0.92);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.2);
+  font-size: 1.05rem;
   font-weight: 600;
   line-height: 1.25;
   pointer-events: none;
@@ -752,6 +756,7 @@ legend { margin-bottom: 8px; color: var(--gold); }
   .scoreline { order: 3; width: 100%; justify-content: center; }
   .bone-lg { width: 48px; height: 90px; }
   .middle { grid-template-columns: 72px minmax(0, 1fr) 72px; }
+  .status { width: min(132px, 48%); font-size: 0.92rem; padding: 5px 8px; }
   .seat:not(.open) .bone-sm { width: 28px; height: 50px; }
   .seat-north .seat-stack { min-height: 50px; }
   .seat-west .seat-stack,
