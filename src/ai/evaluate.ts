@@ -22,7 +22,7 @@ export interface HandEstimate {
  * includes a modest share for the unseen partner when the hand can lead trump.
  */
 export function estimateHand(hand: Domino[], trump: Trump): HandEstimate {
-  if (trump.kind === "followMe") return estimateFollowMe(hand);
+  if (trump.kind === "followMe" || trump.kind === "nello") return estimateFollowMe(hand);
 
   const mine = hand.filter((d) => classify(d, trump).isTrump);
   const held = new Set(mine.map((d) => classify(d, trump).rank));

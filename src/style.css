@@ -182,9 +182,21 @@ h1, h2, h3, .brand, .scoreline strong, .result-card h2 {
 
 .trick-wrap { text-align: center; min-width: 0; }
 .status {
-  margin: 0 0 6px;
-  min-height: 2.6em;
-  font-size: 0.98rem;
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  z-index: 2;
+  width: min(190px, 54%);
+  margin: 0;
+  padding: 7px 12px;
+  transform: translate(-50%, -50%);
+  border-radius: 999px;
+  background: rgba(12, 59, 44, 0.92);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.2);
+  font-size: 1.05rem;
+  font-weight: 600;
+  line-height: 1.25;
+  pointer-events: none;
 }
 .contract { margin: 6px 0 0; color: var(--muted); font-size: 0.84rem; min-height: 1.2em; }
 .trick {
@@ -313,6 +325,7 @@ h1, h2, h3, .brand, .scoreline strong, .result-card h2 {
   border-radius: 16px;
 }
 .bone.locked { opacity: 0.5; pointer-events: none; }
+.your-hand .bone.locked { pointer-events: auto; cursor: grab; }
 button.tile {
   padding: 0;
   appearance: none;
@@ -324,7 +337,8 @@ button.tile:disabled {
   cursor: default;
 }
 .your-hand .tile:not(:disabled):hover { transform: translateY(-8px); }
-.your-hand .tile { transition: transform 0.15s ease; }
+.your-hand .tile { transition: transform 0.15s ease; touch-action: none; cursor: grab; }
+.your-hand .tile.dragging { position: relative; z-index: 3; transform: translateY(-18px); cursor: grabbing; }
 .your-hand .tile.selected { transform: translateY(-14px); box-shadow: 0 0 0 2px #fff, 0 12px 18px rgba(0, 0, 0, 0.35); }
 .just-played { animation: drop 0.28s ease-out; }
 @keyframes drop {
@@ -398,7 +412,32 @@ button.tile:disabled {
   border-radius: 16px;
   padding: 12px;
 }
-.won header { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; margin-bottom: 8px; }
+.won header { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; margin-bottom: 6px; }
+.bid-meter {
+  position: relative;
+  height: 4px;
+  margin: 0 0 8px;
+  background: rgba(255, 255, 255, 0.14);
+  border-radius: 99px;
+}
+.bid-meter-fill {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  border-radius: 99px;
+}
+.bid-meter.us .bid-meter-fill { background: #7eb6ff; }
+.bid-meter.them .bid-meter-fill { background: #e06a5c; }
+.bid-meter-mark {
+  position: absolute;
+  top: -3px;
+  width: 2px;
+  height: 10px;
+  background: #fff;
+  border-radius: 1px;
+  transform: translateX(-1px);
+}
 .won h2 { margin: 0; font-size: 1.02rem; }
 .won header span { color: var(--muted); font-variant-numeric: tabular-nums; }
 .won.theirs h2 { color: #ffc7b2; }
@@ -717,6 +756,7 @@ legend { margin-bottom: 8px; color: var(--gold); }
   .scoreline { order: 3; width: 100%; justify-content: center; }
   .bone-lg { width: 48px; height: 90px; }
   .middle { grid-template-columns: 72px minmax(0, 1fr) 72px; }
+  .status { width: min(132px, 48%); font-size: 0.92rem; padding: 5px 8px; }
   .seat:not(.open) .bone-sm { width: 28px; height: 50px; }
   .seat-north .seat-stack { min-height: 50px; }
   .seat-west .seat-stack,

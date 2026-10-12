@@ -1,7 +1,7 @@
 import type { Domino, Seat } from "../engine/domino";
 import { countValue, dominoKey, teamOf } from "../engine/domino";
 import type { Action, PlayerView } from "../engine/game";
-import { classify, offsuitRankOrder, trumpRankOrder, winningIndex, type Trump } from "../engine/trump";
+import { classify, offsuitRankOrder, trickSize, trumpRankOrder, winningIndex, type Trump } from "../engine/trump";
 import { bestEstimate } from "./evaluate";
 
 export interface BotStyle {
@@ -23,6 +23,7 @@ export function chooseAction(view: PlayerView, style: BotStyle = { margin: 1.25 
     return { type: "declareTrump", trump: bestEstimate(view.hand).trump };
   }
   if (view.phase === "playing" && view.turn === view.seat) {
+    if (view.mayLayDown) return { type: "layDown" };
     const domino = choosePlay(view);
     return { type: "play", domino };
   }
@@ -72,8 +73,23 @@ function choosePlay(view: PlayerView): Domino {
   if (legal.length === 1) return legal[0]!;
   const trump = view.trump;
   if (!trump) return legal[0]!;
+  if (trump.kind === "nello") return chooseNello(view, legal);
   if (view.currentTrick.length === 0) return chooseLead(view, trump, legal);
   return chooseFollow(view, trump, legal);
+}
+
+/** The bidder dumps tiles that lose. Everyone else ducks so the bidder is left with the trick. */
+function chooseNello(view: PlayerView, legal: Domino[]): Domino {
+  const trump = view.trump!;
+  const saving = view.highBidder != null && teamOf(view.highBidder) === view.team;
+  if (view.currentTrick.length === 0) return cheapest(legal, trump);
+  const plays = view.currentTrick.map((play) => play.domino);
+  const ducking = legal.filter((domino) => !wouldWin(domino, plays, trump));
+  if (saving && ducking.length > 0) {
+    return [...ducking].sort((a, b) => rankOf(b, trump) - rankOf(a, trump))[0]!;
+  }
+  if (ducking.length > 0) return cheapest(ducking, trump);
+  return cheapest(legal, trump);
 }
 
 function chooseLead(view: PlayerView, trump: Trump, legal: Domino[]): Domino {
@@ -106,7 +122,7 @@ function chooseFollow(view: PlayerView, trump: Trump, legal: Domino[]): Domino {
   const winAt = winningIndex(plays, trump);
   const winner = view.currentTrick[winAt]!.player;
   const partnerWinning = teamOf(winner) === view.team;
-  const yetToPlay = 4 - view.currentTrick.length - 1;
+  const yetToPlay = trickSize(trump) - view.currentTrick.length - 1;
   const trickCount = plays.reduce((sum, d) => sum + countValue(d), 0);
   const wantTrick = trickCount > 0 || !partnerWinning || yetToPlay > 0;
 
@@ -161,7 +177,7 @@ function rankOf(d: Domino, trump: Trump): number {
 }
 
 function outstandingTrump(view: PlayerView, trump: Trump): boolean {
-  if (trump.kind === "followMe") return false;
+  if (trump.kind === "followMe" || trump.kind === "nello") return false;
   const seen = seenKeys(view);
   return trumpRankList(trump).some((rank) => {
     const key = trumpTileKey(trump, rank);
@@ -209,7 +225,7 @@ function trumpRankList(trump: Trump): number[] {
 
 function trumpTileKey(trump: Trump, rank: number): string | null {
   if (trump.kind === "doubles") return `${rank}-${rank}`;
-  if (trump.kind === "followMe") return null;
+  if (trump.kind === "followMe" || trump.kind === "nello") return null;
   if (rank === 7) return `${trump.suit}-${trump.suit}`;
   const hi = Math.max(trump.suit, rank);
   const lo = Math.min(trump.suit, rank);

@@ -47,11 +47,11 @@ const LESSONS: Lesson[] = [
       },
       {
         spot: "partner",
-        say: "North is your partner. You sit across from each other and you score together.",
+        say: "Player 3 is your partner. You sit across from each other and you score together.",
       },
       {
         spot: "opponents",
-        say: "West and East are the other team. They bid against you and or try to stop your bids.",
+        say: "Player 2 and Player 4 are the other team. They bid against you and or try to stop your bids.",
       },
       {
         spot: "trump",
@@ -72,7 +72,7 @@ const LESSONS: Lesson[] = [
         kind: "you",
         action: { type: "bid", amount: 30 },
         spot: "bids",
-        say: "East passed. Bid 30. This is the lowest bid, and gives you the best opportunity for success. You are saying \"I think I can win 30 out of the 42 points\".",
+        say: "Player 4 passed. Bid 30. This is the lowest bid, and gives you the best opportunity for success. You are saying \"I think I can win 30 out of the 42 points\".",
         hint: "Bid 30. Passing deals again, and this lesson needs the hand in front of you.",
       },
       { kind: "auto", action: { type: "bid", amount: "pass" } },
@@ -100,7 +100,7 @@ const LESSONS: Lesson[] = [
         kind: "you",
         action: { type: "play", domino: tile("5-1") },
         spot: "hand",
-        say: "East led the 5-2. If you have a 5, you must play it. The bright tiles are the legal plays. Play the 5-1.",
+        say: "Player 4 led the 5-2. If you have a 5, you must play it. The bright tiles are the legal plays. Play the 5-1.",
         hint: "That tile is legal, but this lesson wants the 5-1.",
       },
     ],

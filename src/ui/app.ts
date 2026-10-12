@@ -12,14 +12,15 @@ import {
   defaultSettings,
   observe,
   scoreUnit,
+  trickPoints,
 } from "../engine/game";
 import { chatSpeaker, chatText, isSeat, type NetMessage } from "../net/messages";
 import { guestSeats } from "../net/seats";
 import { openGuest, openHost, type GuestLink, type HostLink } from "../net/session";
-import { trumpKey, trumpName, type Trump } from "../engine/trump";
+import { classify, trumpKey, trumpName, type Trump } from "../engine/trump";
 import { boneHtml, sortHand } from "./dominoView";
 import { lessonById, sameLessonAction, wantedKey, type Lesson, type LessonSpot } from "./lessons";
-import { type Names, RULES_HTML, contractLine, needLine, seatWord, turnLine, yourPlayLine } from "./text";
+import { type Names, RULES_HTML, contractLine, needLine, seatWord, teamTag, turnLine } from "./text";
 
 const PACE_MS = {
   relaxed: { think: 900, trick: 1300, pass: 1400 },
@@ -59,6 +60,7 @@ const TRUMP_BUTTONS: Array<{ trump: Trump; label: string; hint: string }> = [
   { trump: { kind: "suit", suit: 6 }, label: "Sixes", hint: "6s" },
   { trump: { kind: "doubles" }, label: "Doubles", hint: "the seven doubles" },
   { trump: { kind: "followMe" }, label: "No Trump", hint: "follow me" },
+  { trump: { kind: "nello" }, label: "Nello", hint: "lose every trick" },
 ];
 
 export function mount(root: HTMLElement): void {
@@ -89,6 +91,10 @@ export function mount(root: HTMLElement): void {
   let audio: AudioContext | null = null;
   let chat: Array<{ from: string; text: string; mine: boolean }> = [];
   let chatDraft = "";
+  let handOrder: string[] = [];
+  let mayLayDown = false;
+  let ignoreSelectUntil = 0;
+  let handDrag: { pointerId: number; key: string; startX: number; moved: boolean } | null = null;
 
   root.addEventListener("input", (event) => {
     const target = event.target as HTMLInputElement | null;
@@ -116,6 +122,52 @@ export function mount(root: HTMLElement): void {
   });
 
   window.addEventListener("resize", () => placeCoach());
+
+  root.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0) return;
+    const tile = (event.target as HTMLElement | null)?.closest<HTMLElement>(".your-hand .tile");
+    if (!tile?.dataset.key) return;
+    handDrag = { pointerId: event.pointerId, key: tile.dataset.key, startX: event.clientX, moved: false };
+  });
+
+  root.addEventListener("pointermove", (event) => {
+    if (!handDrag || event.pointerId !== handDrag.pointerId) return;
+    if (Math.abs(event.clientX - handDrag.startX) > 8) handDrag.moved = true;
+    if (!handDrag.moved) return;
+    const hand = root.querySelector(".your-hand");
+    const tile = hand?.querySelector<HTMLElement>(`.tile[data-key="${handDrag.key}"]`);
+    if (!hand || !tile) return;
+    tile.classList.add("dragging");
+    const others = Array.from(hand.querySelectorAll<HTMLElement>(".tile")).filter((item) => item !== tile);
+    let before: HTMLElement | null = null;
+    for (const other of others) {
+      const rect = other.getBoundingClientRect();
+      if (event.clientX < rect.left + rect.width / 2) {
+        before = other;
+        break;
+      }
+    }
+    if (before) hand.insertBefore(tile, before);
+    else hand.appendChild(tile);
+  });
+
+  root.addEventListener("pointerup", (event) => {
+    if (!handDrag || event.pointerId !== handDrag.pointerId) return;
+    const moved = handDrag.moved;
+    handDrag = null;
+    if (!moved) return;
+    const hand = root.querySelector(".your-hand");
+    if (!hand) return;
+    handOrder = Array.from(hand.querySelectorAll<HTMLElement>(".tile"))
+      .map((tile) => tile.dataset.key ?? "")
+      .filter(Boolean);
+    hand.querySelectorAll(".dragging").forEach((tile) => tile.classList.remove("dragging"));
+    ignoreSelectUntil = performance.now() + 400;
+  });
+
+  root.addEventListener("pointercancel", () => {
+    handDrag = null;
+  });
 
   root.addEventListener("click", (event) => {
     const target = (event.target as HTMLElement | null)?.closest<HTMLElement>("[data-act]");
@@ -155,8 +207,13 @@ export function mount(root: HTMLElement): void {
     else if (act === "pace") pace = (target.dataset.pace as Pace) || "normal";
     else if (act === "bid") onBid(target.dataset.amount === "pass" ? "pass" : Number(target.dataset.amount));
     else if (act === "trump") onTrump(target.dataset.trump ?? "");
-    else if (act === "select") onSelect(target.dataset.key ?? "");
-    else if (act === "play") playSelected();
+    else if (act === "select") {
+      if (performance.now() < ignoreSelectUntil) ignoreSelectUntil = 0;
+      else onSelect(target.dataset.key ?? "");
+    } else if (act === "play") playSelected();
+    else if (act === "lay-down") {
+      if (state?.phase === "playing" && state.turn === me) commit({ type: "layDown" });
+    }
     else if (act === "next") {
       if (state?.phase === "handComplete") commit({ type: "nextHand" });
     } else if (act === "new-match") {
@@ -528,7 +585,7 @@ export function mount(root: HTMLElement): void {
     if (message.type === "chat") {
       const text = chatText(message.text);
       if (!text) return;
-      const from = names[seat] || seatWord(seat, me, names);
+      const from = names[seat] || seatWord(seat, names);
       relayChat(from, text, seat);
       rememberChat(from, text, false);
       return;
@@ -549,7 +606,7 @@ export function mount(root: HTMLElement): void {
     }
     if (message.type !== "action" || !state || state.turn !== seat) return;
     const action = message.action;
-    if (action.type !== "bid" && action.type !== "declareTrump" && action.type !== "play") return;
+    if (action.type !== "bid" && action.type !== "declareTrump" && action.type !== "play" && action.type !== "layDown") return;
     commit(action);
   }
 
@@ -666,6 +723,7 @@ export function mount(root: HTMLElement): void {
     if (message.type !== "sync") return;
     me = message.view.seat;
     names = [message.names[0] ?? null, message.names[1] ?? null, message.names[2] ?? null, message.names[3] ?? null];
+    mayLayDown = message.view.mayLayDown;
     state = stateFromView(message.view);
     screen = "table";
     alertText = "";
@@ -736,8 +794,13 @@ export function mount(root: HTMLElement): void {
     return ((me + steps) % 4) as Seat;
   }
 
+  function teamLabel(team: 0 | 1): string {
+    const seats: [Seat, Seat] = team === 0 ? [0, 2] : [1, 3];
+    return teamTag(seats, names);
+  }
+
   function opponentsLabel(): string {
-    return `${seatWord(seatAt("w"), me, names)} & ${seatWord(seatAt("e"), me, names)}`;
+    return teamLabel(teamOf(me) === 0 ? 1 : 0);
   }
 
   function roomLink(): string {
@@ -883,7 +946,7 @@ export function mount(root: HTMLElement): void {
     const hostControls =
       role === "host"
         ? `<p class="room-code">${escapeHtml(roomCode)}</p>
-           <p class="fine">Share the code or link below. Partners sit across: South with North, West with East. Put two people across from each other to partner them, or side by side to oppose them. An empty seat is a bot. Seats stay put once the first hand is dealt. Keep this tab open for the whole match.</p>
+           <p class="fine">Share the code or link below. Partners sit across: Player 1 with Player 3, Player 2 with Player 4. Put two people across from each other to partner them, or side by side to oppose them. An empty seat is a bot. Seats stay put once the first hand is dealt. Keep this tab open for the whole match.</p>
            <p class="fine room-link">${escapeHtml(roomLink())}</p>
            <p class="fine">Empty seats</p>
            <div class="choice-row">${botButtons()}</div>
@@ -931,7 +994,7 @@ export function mount(root: HTMLElement): void {
             <p class="brand-sub">Hand ${game.handNumber} · first to ${target} ${matchUnit}${role === "local" && !lesson ? ` · ${botLevel} bots` : ""}</p>
           </div>
           <div class="scoreline ${spotClass("marks")}" data-spot="marks" aria-label="Match score">
-            <span class="us"><small>You &amp; Partner</small><strong>${us}</strong></span>
+            <span class="us"><small>${escapeHtml(teamLabel(mine))}</small><strong>${us}</strong></span>
             <span class="divider" aria-hidden="true"></span>
             <span class="them"><small>${escapeHtml(opponentsLabel())}</small><strong>${them}</strong></span>
           </div>
@@ -952,15 +1015,17 @@ export function mount(root: HTMLElement): void {
                 <div class="middle">
                   ${seatBlock(game, seatAt("w"), "west")}
                   <div class="trick-wrap">
-                    <p class="status" aria-live="polite">${escapeHtml(lessonOver() ? "Lesson complete." : turnLine(game, me, names))}</p>
-                    <div class="trick ${spotClass("played")}" data-spot="played">${trickSlots(game)}</div>
+                    <div class="trick ${spotClass("played")}" data-spot="played">
+                      <p class="status" aria-live="polite">${escapeHtml(lessonOver() ? "Lesson complete." : turnLine(game, me, names))}</p>
+                      ${trickSlots(game)}
+                    </div>
                     <p class="contract">${escapeHtml(handBanner(game, me, names))}</p>
                     <p class="count-out">${escapeHtml(countOutLine(game))}</p>
                   </div>
                   ${seatBlock(game, seatAt("e"), "east")}
                 </div>
                 <div class="south-plate ${game.turn === me ? "active" : ""}">
-                  <span>You</span>
+                  <span>${escapeHtml(seatWord(me, names))}</span>
                   ${game.phase === "bidding" && game.shaker === me ? "<em>shook</em>" : ""}
                 </div>
               </div>
@@ -1024,7 +1089,7 @@ export function mount(root: HTMLElement): void {
           ${bidChip(game, seat)}
         </div>
         <div class="nameplate">
-          <strong>${escapeHtml(seatWord(seat, me, names))}</strong>
+          <strong>${escapeHtml(seatWord(seat, names))}</strong>
           ${game.phase === "bidding" && game.shaker === seat ? "<em>shook</em>" : ""}
           ${game.shaker === seat ? `<span class="shaker">shaker</span>` : ""}
         </div>
@@ -1054,21 +1119,35 @@ export function mount(root: HTMLElement): void {
   function yourHandHtml(game: GameState): string {
     const legal = legalKeys(game);
     const yourTurn = game.phase === "playing" && game.turn === me && !lessonOver();
-    return sortHand(game.hands[me], game.trump)
+    return orderedHand(game)
       .map((d) => {
         const key = dominoKey(d);
-        const playable = !yourTurn || legal.has(key);
         const wanted = wantedKey(lesson?.def.beats[lesson.beat]);
         return boneHtml(d, {
           size: "lg",
           trump: game.trump,
-          interactive: playable && yourTurn,
-          selected: selectedKey === key && playable,
+          interactive: true,
+          selected: selectedKey === key && yourTurn && legal.has(key),
           locked: yourTurn && !legal.has(key),
           marked: yourTurn && wanted === key,
         });
       })
       .join("");
+  }
+
+  function orderedHand(game: GameState): Domino[] {
+    const hand = game.hands[me];
+    const byKey = new Map(hand.map((domino) => [dominoKey(domino), domino]));
+    const current = new Set(byKey.keys());
+    const known = handOrder.filter((key) => current.has(key));
+    const hasNew = [...current].some((key) => !handOrder.includes(key));
+    if (hasNew || known.length !== current.size) {
+      const sorted = sortHand(hand, game.trump);
+      handOrder = sorted.map(dominoKey);
+      return sorted;
+    }
+    handOrder = known;
+    return known.map((key) => byKey.get(key)!);
   }
 
   function lessonOver(): boolean {
@@ -1095,13 +1174,21 @@ export function mount(root: HTMLElement): void {
       ).join("");
       return `<div class="trumps ${spotClass("trumps")}" data-spot="trumps" aria-label="Name trump">${buttons}</div>`;
     }
+    const lay = viewerMayLayDown(game)
+      ? `<button type="button" class="primary" data-act="lay-down">Lay down</button>`
+      : "";
     if (game.phase === "playing" && game.turn === me && selectedKey && legalKeys(game).has(selectedKey)) {
-      return `<div class="play-row"><p class="dock-note">${escapeHtml(yourPlayLine(game, me))}</p><button type="button" class="primary play-go" data-act="play">Play ${selectedKey}</button></div>`;
+      return `<div class="play-row">${lay}<button type="button" class="primary play-go" data-act="play">Play ${selectedKey}</button></div>`;
     }
-    if (game.phase === "playing" && game.turn === me) {
-      return `<p class="dock-note">${escapeHtml(alertText || yourPlayLine(game, me))}</p>`;
-    }
-    return `<p class="dock-note">${escapeHtml(alertText || waitingNote(game, me, names))}</p>`;
+    if (alertText) return `<p class="dock-note">${escapeHtml(alertText)}</p>${lay}`;
+    if (lay) return `<div class="play-row">${lay}</div>`;
+    return "";
+  }
+
+  function viewerMayLayDown(game: GameState): boolean {
+    if (game.phase !== "playing" || game.turn !== me || lessonOver()) return false;
+    if (role === "guest") return mayLayDown;
+    return observe(game, me).mayLayDown;
   }
 
   function legalKeys(game: GameState): Set<string> {
@@ -1118,16 +1205,18 @@ export function mount(root: HTMLElement): void {
         <section class="won theirs">
           <header>
             <h2>${escapeHtml(opponentsLabel())}</h2>
-            <span>${game.handPoints[mine === 0 ? 1 : 0]}</span>
+            <span>${shownPoints(game, mine === 0 ? 1 : 0)}</span>
           </header>
+          ${bidMeterHtml(game, mine === 0 ? 1 : 0, me)}
           ${trickStack(game, theirs)}
         </section>
         <div class="stack-gap" aria-hidden="true"></div>
         <section class="won ours">
           <header>
-            <h2>You &amp; Partner</h2>
-            <span>${game.handPoints[mine]}</span>
+            <h2>${escapeHtml(teamLabel(mine))}</h2>
+            <span>${shownPoints(game, mine)}</span>
           </header>
+          ${bidMeterHtml(game, mine, me)}
           ${trickStack(game, ours)}
         </section>
       </div>`;
@@ -1142,7 +1231,7 @@ export function mount(root: HTMLElement): void {
             boneHtml(play.domino, {
               size: "xs",
               trump: game.trump,
-              marked: play.player === trick.winner,
+              marked: game.trump ? classify(play.domino, game.trump).isTrump : false,
             }),
           )
           .join("");
@@ -1260,8 +1349,9 @@ export function mount(root: HTMLElement): void {
     const result = game.lastResult;
     if (!result || result.passed) return "";
     if (game.phase !== "handComplete" && game.phase !== "matchComplete") return "";
-    const bidder = result.bidder == null ? "" : seatWord(result.bidder, me, names);
+    const bidder = result.bidder == null ? "" : seatWord(result.bidder, names);
     const trump = result.trump ? trumpName(result.trump) : "";
+    const nello = result.trump?.kind === "nello";
     const made = result.made ? "Made." : "Set.";
     const mine = teamOf(me);
     const usAward = result.awarded[mine];
@@ -1275,13 +1365,18 @@ export function mount(root: HTMLElement): void {
           ? "Your team wins the match."
           : `${opponentsLabel()} win the match.`;
     const next =
-      game.phase === "matchComplete"
-        ? `<button type="button" class="primary" data-act="new-match">New match</button>`
-        : `<button type="button" class="primary" data-act="next">Next hand</button>`;
+      role === "guest"
+        ? `<p class="dock-note">${game.phase === "matchComplete" ? "Waiting for the host to start the next match." : "Waiting for the host to start the next hand."}</p>`
+        : game.phase === "matchComplete"
+          ? `<button type="button" class="primary" data-act="new-match">New match</button>`
+          : `<button type="button" class="primary" data-act="next">Next hand</button>`;
+    const kicker = nello
+      ? `${bidder} · Nello`
+      : `${bidder} · ${String(result.bid)} · ${trump}`;
     return `
       <div class="overlay" role="dialog" aria-label="Hand result">
         <div class="result-card">
-          <p class="result-kicker">${escapeHtml(bidder)} · ${escapeHtml(String(result.bid))} · ${escapeHtml(trump)}</p>
+          <p class="result-kicker">${escapeHtml(kicker)}</p>
           <h2>${made}</h2>
           <p>Captured this hand: your team ${result.captured[mine]}, opponents ${result.captured[mine === 0 ? 1 : 0]}.</p>
           <p>Awarded: your team ${usAward} ${ourUnit}, opponents ${themAward} ${theirUnit}.</p>
@@ -1313,7 +1408,7 @@ export function mount(root: HTMLElement): void {
 
   function guestPlaceLine(): string {
     const partner = names[partnerOf(me)] || "a bot";
-    return `You are sitting ${seatTitle(me)}. Your partner is ${partner}.`;
+    return `You are ${seatTitle(me)}. Your partner is ${partner}.`;
   }
 
   function personAt(seat: Seat): string {
@@ -1363,7 +1458,7 @@ export function mount(root: HTMLElement): void {
 }
 
 function seatTitle(seat: Seat): string {
-  return (["South", "West", "North", "East"] as const)[seat];
+  return `Player ${seat + 1}`;
 }
 
 function clamp(value: number, min: number, max: number): number {
@@ -1411,17 +1506,10 @@ function countOutLine(game: GameState): string {
 function handBanner(game: GameState, viewer: Seat, names: Names): string {
   if (game.phase === "bidding") {
     const high = game.highBid == null ? "no bid yet" : `high bid ${game.highBid}`;
-    return `${seatWord(game.shaker, viewer, names)} shook · ${high}`;
+    return `${seatWord(game.shaker, names)} shook · ${high}`;
   }
   const need = needLine(game, viewer);
-  return [contractLine(game, viewer, names), need].filter(Boolean).join(" · ");
-}
-
-function waitingNote(game: GameState, viewer: Seat, names: Names): string {
-  if (game.phase === "trickComplete") return "Gathering the trick.";
-  if (game.phase === "handComplete" && game.lastResult?.passed) return "No one bid. Shaking again.";
-  if (game.turn != null && game.turn !== viewer) return `${seatWord(game.turn, viewer, names)} is deciding.`;
-  return "Watch the table.";
+  return [contractLine(game, names), need].filter(Boolean).join(" · ");
 }
 
 function stateFromView(view: PlayerView): GameState {
@@ -1469,8 +1557,49 @@ function cleanName(value: string): string {
 function parseButton(key: string): Trump {
   if (key === "doubles") return { kind: "doubles" };
   if (key === "followMe") return { kind: "followMe" };
+  if (key === "nello") return { kind: "nello" };
   const suit = Number(key.slice("suit:".length));
   return { kind: "suit", suit };
+}
+
+function shownPoints(game: GameState, team: 0 | 1): number {
+  let points = game.handPoints[team];
+  if (game.phase === "trickComplete" && game.turn != null && teamOf(game.turn) === team && game.trump?.kind !== "nello") {
+    points += trickPoints(game.currentTrick);
+  }
+  return points;
+}
+
+function bidMeterHtml(game: GameState, team: 0 | 1, viewer: Seat): string {
+  if (game.highBid == null || game.highBidder == null) return "";
+  if (game.phase === "bidding" || game.phase === "handComplete" || game.phase === "matchComplete") return "";
+  const bidderTeam = teamOf(game.highBidder);
+  const nello = game.trump?.kind === "nello";
+  let fill = 0;
+  let mark = 0;
+  let label = "";
+  if (nello) {
+    const tricks = game.completedTricks.filter((trick) => teamOf(trick.winner) === team).length;
+    fill = tricks / 7;
+    mark = team === bidderTeam ? 1 / 7 : 1;
+    label = team === bidderTeam ? "Any trick sets nello" : "Take every trick";
+  } else {
+    const need = Math.min(game.highBid, 42);
+    const points = shownPoints(game, team);
+    fill = points / 42;
+    if (team === bidderTeam) {
+      mark = need / 42;
+      label = `${need} to make`;
+    } else {
+      const setAt = game.highBid >= 42 ? 1 : 42 - need + 1;
+      mark = Math.min(setAt, 42) / 42;
+      label = `${setAt} to set`;
+    }
+  }
+  const width = Math.max(0, Math.min(100, fill * 100));
+  const left = Math.max(0, Math.min(100, mark * 100));
+  const tone = team === teamOf(viewer) ? "us" : "them";
+  return `<div class="bid-meter ${tone}" title="${escapeHtml(label)}" aria-label="${escapeHtml(label)}"><span class="bid-meter-fill" style="width:${width.toFixed(2)}%"></span><span class="bid-meter-mark" style="left:${left.toFixed(2)}%"></span></div>`;
 }
 
 function escapeHtml(value: string): string {
