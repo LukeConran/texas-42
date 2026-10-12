@@ -8,6 +8,10 @@ import { chooseAmong, chooseSearched } from "./search";
 export type BotLevel = "easy" | "medium" | "hard";
 
 export function chooseBotAction(view: PlayerView, level: BotLevel): Action {
+  if (view.mayLayDown) return { type: "layDown" };
+  if (view.phase === "playing" && view.trump?.kind === "nello" && view.turn === view.seat) {
+    return chooseAction(view);
+  }
   if (level === "easy") return chooseEasy(view);
   if (level === "hard") return chooseHard(view);
   return chooseAction(view, seatStyle(view.seat));

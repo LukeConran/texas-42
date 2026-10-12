@@ -1,44 +1,49 @@
 import type { Seat } from "../engine/domino";
-import { partnerOf, seatSteps, suitName, teamOf } from "../engine/domino";
+import { teamOf } from "../engine/domino";
 import type { GameState } from "../engine/game";
 import { bidLabel } from "../engine/game";
-import { followsLead, ledCall, trumpName } from "../engine/trump";
+import { trumpName } from "../engine/trump";
 
-export function contractLine(state: GameState, viewer: Seat = 0, names?: Names): string {
+export function contractLine(state: GameState, names?: Names): string {
   if (state.highBid == null || state.highBidder == null) return "No bid yet";
-  const who = seatWord(state.highBidder, viewer, names);
+  const who = seatWord(state.highBidder, names);
   const trump = state.trump ? trumpName(state.trump) : "trump not named";
   return `${who} bid ${bidLabel(state.highBid)} · ${trump}`;
 }
 
 export function needLine(state: GameState, viewer: Seat = 0): string {
-  if (state.highBid == null || state.highBidder == null || state.phase === "bidding") return "";
+  if (state.highBid == null || state.highBidder == null) return "";
+  if (state.phase !== "playing" && state.phase !== "trickComplete" && state.phase !== "trump") return "";
   const bidderTeam = teamOf(state.highBidder);
+  if (state.trump?.kind === "nello") {
+    return bidderTeam === teamOf(viewer) ? "Nello. Lose every trick." : "Nello. They must lose every trick.";
+  }
+  if (state.phase === "trump") return "";
   const need = Math.min(state.highBid, 42);
   const have = state.handPoints[bidderTeam];
-  const defenders = state.handPoints[(1 - bidderTeam) as 0 | 1];
-  if (have >= need) return "The bid is made. Finish the hand.";
-  if (defenders > 42 - need) return "The bid is set. Finish the hand.";
   const who = bidderTeam === teamOf(viewer) ? "Your team needs" : "They need";
-  return `${who} ${need - have} more.`;
+  const left = need - have;
+  if (left <= 0) return "The bid is made.";
+  return `${who} ${left} more.`;
 }
 
 export function turnLine(state: GameState, viewer: Seat = 0, names?: Names): string {
+  const who = state.turn == null ? "" : seatWord(state.turn, names);
   if (state.phase === "bidding") {
-    if (state.turn === viewer) return "Your bid. Pass, or name what your team can take.";
-    return `${seatWord(state.turn!, viewer, names)} is bidding.`;
+    if (state.turn === viewer) return "Your bid";
+    return `${who} is bidding`;
   }
   if (state.phase === "trump") {
-    if (state.turn === viewer) return "You won the bid. Name trump, then lead.";
-    return `${seatWord(state.turn!, viewer, names)} is naming trump.`;
+    if (state.turn === viewer) return "Choose trump";
+    return `${who} is choosing trump`;
   }
-  if (state.phase === "playing" || state.phase === "trickComplete") {
-    if (state.phase === "trickComplete" && state.turn != null) {
-      const who = seatWord(state.turn, viewer, names);
-      return who === "You" ? "You take the trick." : `${who} takes the trick.`;
-    }
-    if (state.turn === viewer) return yourPlayLine(state, viewer);
-    return `${seatWord(state.turn!, viewer, names)} to play.`;
+  if (state.phase === "playing") {
+    if (state.turn === viewer) return "Your turn";
+    return `${who}'s turn`;
+  }
+  if (state.phase === "trickComplete" && state.turn != null) {
+    if (state.turn === viewer) return "You take the trick";
+    return `${who} takes the trick`;
   }
   if (state.phase === "handComplete" && state.lastResult?.passed) {
     return "Everyone passed. Shake again.";
@@ -47,32 +52,25 @@ export function turnLine(state: GameState, viewer: Seat = 0, names?: Names): str
   return "Hand complete.";
 }
 
-export function yourPlayLine(state: GameState, viewer: Seat = 0): string {
-  if (!state.trump) return "Your play.";
-  const opening =
-    state.settings.openingLeadMustBeTrump &&
-    state.completedTricks.length === 0 &&
-    state.currentTrick.length === 0 &&
-    state.trump.kind !== "followMe";
-  if (state.currentTrick.length === 0) {
-    return opening ? "Your lead. The first tile must be a trump." : "Your lead. Play any tile.";
-  }
-  const lead = state.currentTrick[0]!.domino;
-  const call = ledCall(lead, state.trump);
-  const canFollow = state.hands[viewer].some((d) => followsLead(d, lead, state.trump!));
-  if (!canFollow) return "You can't follow suit. Any tile is legal, and trump is optional.";
-  if (call.isTrump) return "Trump was led. Play a trump.";
-  return `Follow ${suitName(call.suit)}.`;
-}
-
 export type Names = (string | null)[];
 
-export function seatWord(seat: Seat, viewer: Seat = 0, names?: Names): string {
-  if (seatSteps(viewer, seat) === 0) return "You";
+/** The same label on every screen. A typed name wins. Otherwise Player 1 through Player 4. */
+export function seatWord(seat: Seat, names?: Names): string {
   const custom = names?.[seat]?.trim();
   if (custom) return custom;
-  if (seat === partnerOf(viewer)) return "Partner";
-  return seatSteps(viewer, seat) === 1 ? "West" : "East";
+  return `Player ${seat + 1}`;
+}
+
+export function seatInitials(seat: Seat, names?: Names): string {
+  const custom = names?.[seat]?.trim();
+  if (!custom) return `P${seat + 1}`;
+  const parts = custom.split(/\s+/).filter(Boolean);
+  if (parts.length >= 2) return `${parts[0]![0]!}${parts[parts.length - 1]![0]!}`.toUpperCase();
+  return custom.slice(0, 1).toUpperCase();
+}
+
+export function teamTag(seats: [Seat, Seat], names?: Names): string {
+  return `${seatInitials(seats[0], names)} & ${seatInitials(seats[1], names)}`;
 }
 
 export function bidChip(amount: number | "pass" | null, pending: boolean): string {
@@ -83,11 +81,13 @@ export function bidChip(amount: number | "pass" | null, pending: boolean): strin
 
 export const RULES_HTML = `
 <h2>How a hand works</h2>
-<p>Texas 42 is a trick-taking game for four players in two partnerships. You sit South. Partner sits across from you. West and East are the other team. A double-six set is shaken and dealt, seven tiles each. There is no boneyard.</p>
+<p>Texas 42 is a trick-taking game for four players in two partnerships. Player 1 sits across from Player 3. Player 2 sits across from Player 4. A double-six set is shaken and dealt, seven tiles each. There is no boneyard.</p>
 <p>There are 42 points in every hand: 1 for each of the seven tricks, plus the five count tiles. The 5-counts are 5-0, 4-1, and 3-2. The 10-counts are 6-4 and 5-5.</p>
 <h2>Bidding</h2>
 <p>The player to the left of the shaker bids first. Each player bids once. A bid is 30 through 42, and it must be higher than the bid before it. After 42, someone may bid 84 (two marks). Only after 84 can the table go to 126 or 168. If everyone passes, the tiles are shaken again and nobody scores.</p>
-<p>The high bidder names trump before leading: blanks, ones, twos, threes, fours, fives, sixes, doubles, or no trump (follow me). In the standard game the opening lead does not have to be a trump. There is a house rule in the menu if you want to require one.</p>
+<p>The high bidder names trump before leading: blanks, ones, twos, threes, fours, fives, sixes, doubles, or no trump (follow me). Nello is a different call. The bidder's partner puts their tiles away, and the bidder has to lose every trick. The number bid does not count on a nello. In the standard game the opening lead does not have to be a trump. There is a house rule in the menu if you want to require one.</p>
+<p>The hand ends as soon as the bid is made or set. Once the bidding team has the points it named, the other team cannot set them. Once the other team has more points than the bid can catch, the hand ends set. A bid of 42 or more is set as soon as the other team takes a point, and it is made only when every point is taken.</p>
+<p>When you are on lead and every tile you still hold would win, you may lay the hand down. The remaining tricks and count come in at once. That covers holding the rest of the trumps when nothing left in your hand can lose, and leading in follow me with only doubles left.</p>
 <h2>Trumps and following suit</h2>
 <p>A tile that contains the trump number belongs only to trump. The other end is its rank, and the double is highest. If fours are trump, the 4-2 is a four, not a two. When a two is led, you do not play the 4-2 just because it has a two.</p>
 <p>On a trump lead, play a trump if you have one. On any other lead, the suit is the higher end, and you must play a tile with that number on either end if you can. The 3-1 follows a one, including the double-one. If you cannot follow, you may play anything. Trump is allowed then, and it is not required. A trump beats the suit that was led. The highest trump wins if more than one is played. Otherwise the highest tile of the led suit wins. The double is highest, and the other end is the rank.</p>

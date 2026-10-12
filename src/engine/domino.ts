@@ -75,7 +75,7 @@ export function seatPlace(viewer: Seat, seat: Seat): "s" | "w" | "n" | "e" {
   return (["s", "w", "n", "e"] as const)[seatSteps(viewer, seat)] ?? "s";
 }
 
-export const SEAT_NAMES = ["You", "West", "Partner", "East"] as const;
+export const SEAT_NAMES = ["Player 1", "Player 2", "Player 3", "Player 4"] as const;
 
 export function seatName(seat: Seat): string {
   return SEAT_NAMES[seat];
