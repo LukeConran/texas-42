@@ -10,7 +10,9 @@ export type NetMessage =
   | { type: "rematch" }
   | { type: "chat"; text: string; from?: string }
   | { type: "seated"; seat: Seat; names: Names }
-  | { type: "resign" };
+  | { type: "resign" }
+  | { type: "away"; epoch: number }
+  | { type: "rejoin"; name: string; epoch: number; seat: Seat | null };
 
 export const CHAT_LIMIT = 200;
 
@@ -46,6 +48,17 @@ export function decode(raw: string): NetMessage | null {
       return { type: "seated", seat: value.seat, names };
     }
     if (value.type === "resign") return { type: "resign" };
+    if (value.type === "away") {
+      const epoch = wholeEpoch(value.epoch);
+      if (!epoch) return null;
+      return { type: "away", epoch };
+    }
+    if (value.type === "rejoin") {
+      const epoch = wholeEpoch(value.epoch);
+      if (!epoch) return null;
+      const name = chatSpeaker(value.name).slice(0, 16);
+      return { type: "rejoin", name, epoch, seat: isSeat(value.seat) ? value.seat : null };
+    }
     if (value.type === "chat") {
       const text = chatText(value.text);
       if (!text) return null;
@@ -58,6 +71,11 @@ export function decode(raw: string): NetMessage | null {
   }
 }
 
-export function isSeat(value: number): value is Seat {
+export function isSeat(value: unknown): value is Seat {
   return value === 0 || value === 1 || value === 2 || value === 3;
+}
+
+function wholeEpoch(value: unknown): number | null {
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 1 || value > 1_000_000) return null;
+  return value;
 }

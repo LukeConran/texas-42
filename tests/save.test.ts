@@ -50,8 +50,26 @@ describe("saved tables", () => {
     writeSave(storage, nello);
     expect(readSave(storage)?.kind).toBe("local");
 
-    writeSave(storage, { kind: "guest", version: 1, room: "ab12", name: "  Jo  " });
-    expect(readSave(storage)).toEqual({ kind: "guest", version: 1, room: "AB12", name: "Jo" });
+    writeSave(storage, { kind: "guest", version: 1, room: "ab12", name: "  Jo  ", guestId: "", epoch: 1, seat: null });
+    expect(readSave(storage)).toEqual({ kind: "guest", version: 1, room: "AB12", name: "Jo", guestId: "", epoch: 1, seat: null });
+    writeSave(storage, {
+      kind: "guest",
+      version: 1,
+      room: "ab12",
+      name: "Jo",
+      guestId: "ABCDEFGHJKLMNPQR",
+      epoch: 2,
+      seat: 3,
+    });
+    expect(readSave(storage)).toEqual({
+      kind: "guest",
+      version: 1,
+      room: "AB12",
+      name: "Jo",
+      guestId: "ABCDEFGHJKLMNPQR",
+      epoch: 2,
+      seat: 3,
+    });
     clearSave(storage);
     expect(readSave(storage)).toBeNull();
     expect(readSave(memory())).toBeNull();

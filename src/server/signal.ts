@@ -140,9 +140,19 @@ export async function handleSignal(body: unknown): Promise<{ status: number; bod
         return { status: 404, body: { error: "The host closed the room." } };
       }
       const now = Date.now();
-      const live = (await listMailGuests(code)).filter((guest) => now - guest.lastSeen <= STALE_MS);
-      if (live.length >= 3) return { status: 409, body: { error: "That room is full." } };
       const name = cleanPlayerName(msg.name);
+      const requested = cleanGuestId(msg.guestId);
+      if (requested) {
+        const existing = await findMailGuest(code, requested);
+        if (existing) {
+          existing.lastSeen = now;
+          if (name) existing.name = name;
+          await saveMailGuest(code, existing);
+          return { status: 200, body: { guestId: existing.id } };
+        }
+      }
+      const seated = await listMailGuests(code);
+      if (seated.length >= 3) return { status: 409, body: { error: "That room is full." } };
       const guestId = makeSecret();
       await rememberGuest(code, { id: guestId, name, enteredAt: now, lastSeen: now, toHost: [], toGuest: [] });
       return { status: 200, body: { guestId } };
@@ -388,6 +398,14 @@ function makeSecret(): string {
 function cleanPlayerName(value: unknown): string {
   if (typeof value !== "string") return "";
   return value.replace(/\s+/g, " ").trim().slice(0, 16);
+}
+
+function cleanGuestId(value: unknown): string {
+  if (typeof value !== "string") return "";
+  const id = value.trim().toUpperCase();
+  if (id.length !== 16) return "";
+  for (const char of id) if (!ALPHABET.includes(char)) return "";
+  return id;
 }
 
 function afterMap(value: unknown): Record<string, number> {

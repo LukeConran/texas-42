@@ -1,7 +1,8 @@
 import type { Seat } from "../engine/domino";
 import type { Names, NetMessage } from "./messages";
 import { decode, encode } from "./messages";
-import { claimSeat, emptyPlan, releaseSeat, swapSeats, type SeatPlan } from "./seats";
+import { isSeat } from "./messages";
+import { emptyPlan, placeGuest, swapSeats, syncRoster, type RosterState, type SeatPlan } from "./seats";
 import { closeRoom, createRoom, enterRoom, guestBox, hostBox, leaveRoom, postMail } from "./signalClient";
 
 /** Matches the server. A background tab can pause timers for about a minute. */
@@ -16,6 +17,8 @@ export interface HostLink {
 }
 
 export interface GuestLink {
+  id: string;
+  epoch: number;
   send(message: NetMessage): Promise<void>;
   close(): void;
 }
@@ -29,14 +32,15 @@ export async function openHost(
   onClose: (seat: Seat) => void,
 ): Promise<HostLink> {
   const { code, hostId } = await createRoom();
-  let plan: SeatPlan = emptyPlan();
+  let roster: RosterState = { plan: emptyPlan(), away: [] };
+  const homes: Record<string, Seat> = {};
   const seatOf = new Map<string, Seat>();
   const guestOf = new Map<Seat, string>();
   const seen = new Map<string, number>();
-  const gone = new Set<string>();
+  const returnedEpoch = new Map<string, number>();
   let stopped = false;
 
-  const syncMaps = (): void => {
+  const syncMaps = (plan: SeatPlan): void => {
     seatOf.clear();
     guestOf.clear();
     ([0, 1, 2, 3] as Seat[]).forEach((seat) => {
@@ -44,6 +48,7 @@ export async function openHost(
       if (!id) return;
       seatOf.set(id, seat);
       guestOf.set(seat, id);
+      homes[id] = seat;
     });
   };
 
@@ -51,32 +56,50 @@ export async function openHost(
     while (!stopped) {
       try {
         const box = await hostBox(code, hostId, Object.fromEntries(seen));
-        for (const guest of box.guests) {
-          if (gone.has(guest.id) || !seatOf.has(guest.id)) continue;
-          if (box.now - guest.lastSeen <= STALE_MS) continue;
-          const seat = seatOf.get(guest.id);
-          gone.add(guest.id);
-          plan = releaseSeat(plan, guest.id);
-          syncMaps();
-          if (seat != null) onClose(seat);
-          void leaveRoom(code, guest.id).catch(() => undefined);
-        }
-        const arrivals = box.guests
-          .filter((guest) => !gone.has(guest.id) && !seatOf.has(guest.id))
-          .sort((a, b) => a.enteredAt - b.enteredAt || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
-        for (const guest of arrivals) {
-          const claimed = claimSeat(plan, guest.id);
-          if (!claimed) continue;
-          plan = claimed.plan;
-          syncMaps();
-          onMessage(claimed.seat, { type: "hello", name: guest.name });
+        const next = syncRoster(roster, box.guests, box.now, STALE_MS, homes);
+        const dropped = new Map(next.events.filter((event) => event.type === "dropped").map((event) => [event.id, event.seat]));
+        roster = next.state;
+        syncMaps(roster.plan);
+        for (const event of next.events) {
+          if (event.type === "joined") onMessage(event.seat, { type: "hello", name: event.name });
         }
         for (const item of box.mail) {
           seen.set(item.guestId, item.n + 1);
-          const seat = seatOf.get(item.guestId);
-          if (seat == null || gone.has(item.guestId)) continue;
+          const seat = seatOf.get(item.guestId) ?? dropped.get(item.guestId);
+          if (seat == null) continue;
           const decoded = decode(item.body);
-          if (decoded) onMessage(seat, decoded);
+          if (!decoded) continue;
+          if (decoded.type === "away") {
+            const seenEpoch = returnedEpoch.get(item.guestId) ?? 0;
+            if (decoded.epoch < seenEpoch) continue;
+            onClose(seat);
+            continue;
+          }
+          if (decoded.type === "rejoin") {
+            const seenEpoch = returnedEpoch.get(item.guestId) ?? 0;
+            if (decoded.epoch < seenEpoch) continue;
+            returnedEpoch.set(item.guestId, decoded.epoch);
+            let seated = seatOf.get(item.guestId);
+            if (seated == null) {
+              const preferred = homes[item.guestId] ?? decoded.seat;
+              const placed = placeGuest(roster.plan, item.guestId, isSeat(preferred) ? preferred : null);
+              if (!placed) continue;
+              roster = { plan: placed.plan, away: roster.away.filter((id) => id !== item.guestId) };
+              syncMaps(roster.plan);
+              seated = placed.seat;
+            }
+            onMessage(seated, decoded);
+            continue;
+          }
+          onMessage(seat, decoded);
+        }
+        for (const event of next.events) {
+          if (event.type === "dropped") {
+            delete homes[event.id];
+            returnedEpoch.delete(event.id);
+            onClose(event.seat);
+          } else if (event.type === "left") onClose(event.seat);
+          else if (event.type === "back") onMessage(event.seat, { type: "rejoin", name: event.name, epoch: 1, seat: event.seat });
         }
       } catch {
         // The next poll retries. A dropped poll should not close the table.
@@ -94,8 +117,8 @@ export async function openHost(
       void deliver(code, guestId, "toGuest", encode(message), hostId);
     },
     swap(a, b) {
-      plan = swapSeats(plan, a, b);
-      syncMaps();
+      roster = { ...roster, plan: swapSeats(roster.plan, a, b) };
+      syncMaps(roster.plan);
     },
     close() {
       stopped = true;
@@ -109,8 +132,12 @@ export async function openGuest(
   name: string,
   onMessage: (message: NetMessage) => void,
   onClose?: () => void,
+  resume?: { guestId: string; epoch: number; seat: Seat | null },
 ): Promise<GuestLink> {
-  const guestId = await enterRoom(code, name);
+  const requested = resume?.guestId ?? "";
+  const epoch = resume && resume.epoch > 0 ? Math.floor(resume.epoch) : 1;
+  const guestId = await enterRoom(code, name, requested || undefined);
+  const resumed = Boolean(requested) && guestId === requested;
   let after = 0;
   let stopped = false;
 
@@ -135,8 +162,13 @@ export async function openGuest(
     }
   };
   void poll();
+  if (resumed) {
+    void deliver(code, guestId, "toHost", encode({ type: "rejoin", name, epoch, seat: resume?.seat ?? null }));
+  }
 
   return {
+    id: guestId,
+    epoch: resumed ? epoch : 1,
     send(message) {
       return deliver(code, guestId, "toHost", encode(message));
     },

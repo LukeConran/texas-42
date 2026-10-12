@@ -18,6 +18,7 @@ import {
 import { chatSpeaker, chatText, isSeat, type NetMessage } from "../net/messages";
 import { guestSeats } from "../net/seats";
 import { openGuest, openHost, type GuestLink, type HostLink } from "../net/session";
+import { postAway } from "../net/signalClient";
 import { classify, trumpKey, trumpName, type Trump } from "../engine/trump";
 import { boneHtml, sortHand } from "./dominoView";
 import { lessonById, sameLessonAction, wantedKey, type Lesson, type LessonSpot } from "./lessons";
@@ -93,7 +94,13 @@ export function mount(root: HTMLElement): void {
   let alertText = "";
   let timer = 0;
   let audio: AudioContext | null = null;
-  let chat: Array<{ from: string; text: string; mine: boolean }> = [];
+  let chat: Array<{ from: string; text: string; mine: boolean; system?: boolean }> = [];
+  let guestId = "";
+  let guestEpoch = 1;
+  let savedSeat: Seat | null = null;
+  let intentionalLeave = false;
+  let awayNames = new Map<Seat, string>();
+  let welcomed = new Set<Seat>();
   let chatDraft = "";
   let handOrder: string[] = [];
   let mayLayDown = false;
@@ -101,13 +108,18 @@ export function mount(root: HTMLElement): void {
   let handDrag: { pointerId: number; key: string; startX: number; moved: boolean } | null = null;
 
   const stored = rememberStorage();
-  const saved = joinCode || !stored ? null : readSave(stored);
-  if (saved?.kind === "guest") {
+  const urlRoom = joinCode;
+  const saved = !stored ? null : readSave(stored);
+  if (saved?.kind === "guest" && (!urlRoom || urlRoom === saved.room)) {
     screen = "join";
     joinCode = saved.room;
     playerName = saved.name;
+    guestId = saved.guestId;
+    guestEpoch = saved.epoch;
+    savedSeat = saved.seat;
+    if (saved.seat != null) me = saved.seat;
     menuNote = "Join again to sit back down. The room is open if the host is still there.";
-  } else if (saved?.kind === "local") {
+  } else if (!urlRoom && saved?.kind === "local") {
     state = saved.state;
     pace = saved.pace;
     botLevel = saved.botLevel;
@@ -254,6 +266,10 @@ export function mount(root: HTMLElement): void {
 
   render();
   queue();
+  window.addEventListener("pagehide", () => {
+    if (intentionalLeave || role !== "guest" || !guestLink) return;
+    postAway(roomCode, guestLink.id, guestLink.epoch);
+  });
 
   function startMatch(): void {
     stopNet();
@@ -366,7 +382,7 @@ export function mount(root: HTMLElement): void {
     ) {
       const thinking = state;
       timer = window.setTimeout(() => {
-        if (state !== thinking || state.turn !== seat) return;
+        if (state !== thinking || state.turn !== seat || humans.has(seat)) return;
         const action = chooseBotAction(observe(state, seat), botLevel);
         if (action.type === "play") blip(360, 0.03);
         commit(action);
@@ -386,6 +402,7 @@ export function mount(root: HTMLElement): void {
 
   async function confirmedLeave(): Promise<void> {
     confirmLeave = false;
+    intentionalLeave = true;
     if (role === "guest" && guestLink) {
       try {
         await guestLink.send({ type: "resign" });
@@ -402,7 +419,15 @@ export function mount(root: HTMLElement): void {
     const storage = rememberStorage();
     if (!storage || lesson) return;
     if (role === "guest" && roomCode) {
-      writeSave(storage, { kind: "guest", version: 1, room: roomCode, name: cleanName(playerName) });
+      writeSave(storage, {
+        kind: "guest",
+        version: 1,
+        room: roomCode,
+        name: cleanName(playerName),
+        guestId,
+        epoch: guestEpoch,
+        seat: placed ? me : savedSeat,
+      });
       return;
     }
     if ((role === "local" || role === "host") && state && screen === "table") {
@@ -451,6 +476,7 @@ export function mount(root: HTMLElement): void {
       return;
     }
     if (screen === "lobby" || connecting || hostLink || guestLink) {
+      intentionalLeave = true;
       forget();
       netToken += 1;
       connecting = false;
@@ -616,9 +642,11 @@ export function mount(root: HTMLElement): void {
 
   let connecting = false;
   let netToken = 0;
+  if (guestId) void startJoin();
 
   async function startHost(): Promise<void> {
     if (connecting) return;
+    intentionalLeave = false;
     connecting = true;
     const token = (netToken += 1);
     role = "local";
@@ -673,6 +701,8 @@ export function mount(root: HTMLElement): void {
       next[seat] = cleanName(message.name) || null;
       names = next;
       humans.add(seat);
+      awayNames.delete(seat);
+      welcomed.delete(seat);
       if (state) broadcast();
       else tellSeats();
       render();
@@ -682,8 +712,16 @@ export function mount(root: HTMLElement): void {
       if (state?.phase === "matchComplete") startOnlineMatch();
       return;
     }
+    if (message.type === "rejoin") {
+      welcomeBack(seat, cleanName(message.name));
+      return;
+    }
     if (message.type === "resign") {
+      const label = names[seat] || awayNames.get(seat) || seatWord(seat, names);
+      if (humans.has(seat)) tableNote(`${label} left the match`);
       humans.delete(seat);
+      welcomed.delete(seat);
+      awayNames.set(seat, label);
       if (state && state.phase !== "matchComplete") {
         state = concede(state, seat);
         broadcast();
@@ -693,7 +731,7 @@ export function mount(root: HTMLElement): void {
       queue();
       return;
     }
-    if (message.type !== "action" || !state || state.turn !== seat) return;
+    if (message.type !== "action" || !state || state.turn !== seat || !humans.has(seat)) return;
     const action = message.action;
     if (action.type !== "bid" && action.type !== "declareTrump" && action.type !== "play" && action.type !== "layDown") return;
     commit(action);
@@ -701,7 +739,12 @@ export function mount(root: HTMLElement): void {
 
   function onGuestClose(seat: Seat): void {
     if (role !== "host") return;
+    const label = names[seat] || awayNames.get(seat) || seatWord(seat, names);
+    const wasHuman = humans.has(seat);
+    if (wasHuman) tableNote(`${label} left the match`);
     humans.delete(seat);
+    welcomed.delete(seat);
+    awayNames.set(seat, label);
     const next = [...names] as Names;
     next[seat] = null;
     names = next;
@@ -709,6 +752,38 @@ export function mount(root: HTMLElement): void {
       broadcast();
       queue();
     } else tellSeats();
+    render();
+  }
+
+  function welcomeBack(seat: Seat, name: string): void {
+    if (role !== "host") return;
+    const label = name || awayNames.get(seat) || names[seat] || seatWord(seat, names);
+    const already = welcomed.has(seat);
+    const wasHuman = humans.has(seat);
+    const next = [...names] as Names;
+    next[seat] = name || awayNames.get(seat) || next[seat];
+    names = next;
+    humans.add(seat);
+    awayNames.delete(seat);
+    welcomed.add(seat);
+    if (!already) {
+      if (wasHuman) tableNote(`${label} left the match`);
+      tableNote(`${label} rejoined the match`);
+    }
+    if (state) broadcast();
+    else tellSeats();
+    render();
+    queue();
+  }
+
+  function tableNote(text: string): void {
+    const last = chat.at(-1);
+    if (last?.system && last.text === text) {
+      render();
+      return;
+    }
+    relayChat("Table", text, null);
+    chat = [...chat, { from: "Table", text, mine: false, system: true }].slice(-40);
     render();
   }
 
@@ -733,6 +808,18 @@ export function mount(root: HTMLElement): void {
       }
     }
     humans = nextHumans;
+    const awayHeld = awayNames.get(from);
+    const awayOther = awayNames.get(to);
+    if (awayHeld) awayNames.set(to, awayHeld);
+    else awayNames.delete(to);
+    if (awayOther) awayNames.set(from, awayOther);
+    else awayNames.delete(from);
+    const heldWelcome = welcomed.has(from);
+    const otherWelcome = welcomed.has(to);
+    if (heldWelcome) welcomed.add(to);
+    else welcomed.delete(to);
+    if (otherWelcome) welcomed.add(from);
+    else welcomed.delete(from);
     if (me === from) me = to;
     else if (me === to) me = from;
     tellSeats();
@@ -748,6 +835,7 @@ export function mount(root: HTMLElement): void {
 
   async function startJoin(): Promise<void> {
     if (connecting) return;
+    intentionalLeave = false;
     const code = joinCode.trim().toUpperCase();
     if (code.length < 4) {
       menuNote = "Enter the four-letter room code.";
@@ -768,13 +856,16 @@ export function mount(root: HTMLElement): void {
     render();
     try {
       placed = false;
-      const opened = await openGuest(code, cleanName(playerName), onHostMessage, onHostClosed);
+      const resume = guestId ? { guestId, epoch: guestEpoch + 1, seat: savedSeat } : undefined;
+      const opened = await openGuest(code, cleanName(playerName), onHostMessage, onHostClosed, resume);
       if (token !== netToken) {
         opened.close();
         role = "local";
         return;
       }
       guestLink = opened;
+      guestId = opened.id;
+      guestEpoch = opened.epoch;
       roomCode = code;
       persist();
       if (!state) {
@@ -801,13 +892,24 @@ export function mount(root: HTMLElement): void {
       me = message.seat;
       names = [message.names[0] ?? null, message.names[1] ?? null, message.names[2] ?? null, message.names[3] ?? null];
       placed = true;
+      savedSeat = me;
+      persist();
       render();
       return;
     }
     if (message.type === "chat") {
       const text = chatText(message.text);
       if (!text) return;
-      rememberChat(chatSpeaker(message.from) || "Table", text, false);
+      const speaker = chatSpeaker(message.from);
+      if (speaker === "Table") {
+        const last = chat.at(-1);
+        if (!(last?.system && last.text === text)) {
+          chat = [...chat, { from: speaker, text, mine: false, system: true }].slice(-40);
+        }
+        render();
+        return;
+      }
+      rememberChat(speaker || "Table", text, false);
       return;
     }
     if (message.type !== "sync") return;
@@ -818,6 +920,9 @@ export function mount(root: HTMLElement): void {
     screen = "table";
     alertText = "";
     selectedKey = null;
+    placed = true;
+    savedSeat = me;
+    persist();
     render();
   }
 
@@ -1537,7 +1642,9 @@ export function mount(root: HTMLElement): void {
     const lines = chat
       .map(
         (line) =>
-          `<p class="chat-line ${line.mine ? "mine" : ""}"><strong>${escapeHtml(line.from)}</strong> ${escapeHtml(line.text)}</p>`,
+          line.system
+            ? `<p class="chat-line system">${escapeHtml(line.text)}</p>`
+            : `<p class="chat-line ${line.mine ? "mine" : ""}"><strong>${escapeHtml(line.from)}</strong> ${escapeHtml(line.text)}</p>`,
       )
       .join("");
     return `

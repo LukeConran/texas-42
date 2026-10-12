@@ -23,6 +23,10 @@ export interface GuestSave {
   version: 1;
   room: string;
   name: string;
+  /** Stable id so a reload sits back down in the same chair. */
+  guestId: string;
+  epoch: number;
+  seat: Seat | null;
 }
 
 export type TableSave = LocalSave | GuestSave;
@@ -57,7 +61,12 @@ function readGuest(record: Record<string, unknown>): GuestSave | null {
   const room = record.room.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 4);
   if (room.length < 4) return null;
   const name = record.name.replace(/[\u0000-\u001f]/g, " ").replace(/\s+/g, " ").trim().slice(0, 16);
-  return { kind: "guest", version: 1, room, name };
+  const guestId = typeof record.guestId === "string" && /^[A-HJ-NP-Z2-9]{16}$/.test(record.guestId) ? record.guestId : "";
+  const epoch = typeof record.epoch === "number" && Number.isInteger(record.epoch) && record.epoch >= 1 && record.epoch <= 1_000_000
+    ? record.epoch
+    : 1;
+  const seat = record.seat === 0 || record.seat === 1 || record.seat === 2 || record.seat === 3 ? record.seat : null;
+  return { kind: "guest", version: 1, room, name, guestId, epoch, seat };
 }
 
 function readLocal(record: Record<string, unknown>): LocalSave | null {

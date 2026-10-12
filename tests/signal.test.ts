@@ -87,6 +87,30 @@ describe("room doorbell", () => {
     expect(gone.status).toBe(404);
   });
 
+  it("gives a returning player the same id and keeps their chair reserved", async () => {
+    const created = await handleSignal({ op: "create" });
+    const { code, hostId } = created.body as { code: string; hostId: string };
+    const first = await handleSignal({ op: "enter", code, name: "Ada" });
+    const guestId = (first.body as { guestId: string }).guestId;
+    const second = await handleSignal({ op: "enter", code, name: "Bea" });
+    const third = await handleSignal({ op: "enter", code, name: "Cy" });
+    expect(second.status).toBe(200);
+    expect(third.status).toBe(200);
+    const full = await handleSignal({ op: "enter", code, name: "Dee" });
+    expect(full.status).toBe(409);
+
+    const again = await handleSignal({ op: "enter", code, name: "Ada", guestId });
+    expect(again.status).toBe(200);
+    expect(again.body).toEqual({ guestId });
+    const unknown = await handleSignal({ op: "enter", code, name: "Ada", guestId: "not-an-id" });
+    expect(unknown.status).toBe(409);
+
+    const host = await handleSignal({ op: "hostBox", code, hostId, after: {} });
+    const names = (host.body as { guests: Array<{ id: string; name: string }> }).guests.map((guest) => guest.name);
+    expect(names).toContain("Ada");
+    expect(names).toHaveLength(3);
+  });
+
   it("answers JSON when Vercel calls the function with a web request", async () => {
     const response = await roomFetch(
       new Request("https://texas42.local/api/signal", {
