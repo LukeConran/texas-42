@@ -18,7 +18,7 @@ import { guestSeats } from "../net/seats";
 import { openGuest, openHost, type GuestLink, type HostLink } from "../net/session";
 import { trumpKey, trumpName, type Trump } from "../engine/trump";
 import { boneHtml, sortHand } from "./dominoView";
-import { lessonById, sameLessonAction, wantedKey, type Lesson } from "./lessons";
+import { lessonById, sameLessonAction, wantedKey, type Lesson, type LessonSpot } from "./lessons";
 import { type Names, RULES_HTML, contractLine, needLine, seatWord, turnLine, yourPlayLine } from "./text";
 
 const PACE_MS = {
@@ -81,7 +81,7 @@ export function mount(root: HTMLElement): void {
   let rulesOpen = false;
   let placed = false;
   let state: GameState | null = null;
-  let lesson: { def: Lesson; beat: number } | null = null;
+  let lesson: { def: Lesson; beat: number; guide: number; hold: boolean; sawTrick: boolean } | null = null;
   let lessonToken = 0;
   let selectedKey: string | null = null;
   let alertText = "";
@@ -115,6 +115,8 @@ export function mount(root: HTMLElement): void {
     moveSeat(from, to);
   });
 
+  window.addEventListener("resize", () => placeCoach());
+
   root.addEventListener("click", (event) => {
     const target = (event.target as HTMLElement | null)?.closest<HTMLElement>("[data-act]");
     if (!target || !root.contains(target)) return;
@@ -139,6 +141,7 @@ export function mount(root: HTMLElement): void {
       menuNote = "";
       screen = "join";
     } else if (act === "back") goBack();
+    else if (act === "guide-next") advanceGuide();
     else if (act === "lesson") startLesson(target.dataset.lesson ?? "");
     else if (act === "host") void startHost();
     else if (act === "join") void startJoin();
@@ -350,7 +353,8 @@ export function mount(root: HTMLElement): void {
     names = [null, null, null, null];
     humans = new Set();
     showHands = false;
-    lesson = { def, beat: 0 };
+    pace = "relaxed";
+    lesson = { def, beat: 0, guide: 0, hold: false, sawTrick: false };
     state = createMatch(matchSettings(def.seed));
     selectedKey = null;
     alertText = "";
@@ -377,12 +381,66 @@ export function mount(root: HTMLElement): void {
     return true;
   }
 
+  function advanceGuide(): void {
+    if (!lesson) return;
+    if (lesson.guide < lesson.def.guide.length) {
+      lesson.guide += 1;
+      pumpLesson();
+      return;
+    }
+    if (lesson.hold) {
+      lesson.hold = false;
+      pumpLesson();
+    }
+  }
+
+  function coachMoment(): { say: string; spot: LessonSpot | "watch" | "done"; showNext: boolean } | null {
+    if (!lesson) return null;
+    if (lesson.hold) {
+      return { say: "This trick stays in the middle until you hit Next.", spot: "played", showNext: true };
+    }
+    const guide = lesson.def.guide[lesson.guide];
+    if (guide) return { say: guide.say, spot: guide.spot, showNext: true };
+    const beat = lesson.def.beats[lesson.beat];
+    if (!beat) return { say: lesson.def.done, spot: "done", showNext: false };
+    if (beat.kind === "you") return { say: beat.say, spot: beat.spot ?? "hand", showNext: false };
+    if (state && state.completedTricks.length >= 1 && state.currentTrick.length === 0) {
+      return { say: "That trick is in the column now.", spot: "tricks", showNext: false };
+    }
+    return { say: "Watch the table.", spot: "watch", showNext: false };
+  }
+
+  function activeSpot(): LessonSpot | null {
+    const moment = coachMoment();
+    if (!moment || moment.spot === "watch" || moment.spot === "done") return null;
+    return moment.spot;
+  }
+
+  function spotClass(spot: LessonSpot): string {
+    return activeSpot() === spot ? "lit" : "";
+  }
+
   function pumpLesson(): void {
     const token = (lessonToken += 1);
+    if (lesson && lesson.guide < lesson.def.guide.length) {
+      render();
+      return;
+    }
     const step = (): void => {
       if (token !== lessonToken || !lesson || !state) return;
       const beat = lesson.def.beats[lesson.beat];
       if (!beat || beat.kind === "you") {
+        render();
+        return;
+      }
+      if (
+        beat.action.type === "acknowledgeTrick" &&
+        !lesson.sawTrick &&
+        state.currentTrick.length === 4 &&
+        state.completedTricks.length === 0
+      ) {
+        lesson.sawTrick = true;
+        lesson.hold = true;
         render();
         return;
       }
@@ -403,7 +461,7 @@ export function mount(root: HTMLElement): void {
         run();
         return;
       }
-      timer = window.setTimeout(run, 360);
+      timer = window.setTimeout(run, PACE_MS[pace].trick);
       render();
     };
     step();
@@ -712,6 +770,7 @@ export function mount(root: HTMLElement): void {
     else root.innerHTML = homeHtml();
     const log = root.querySelector<HTMLElement>(".chat-log");
     if (log) log.scrollTop = log.scrollHeight;
+    placeCoach();
     if (!chatFocused) return;
     const field = root.querySelector<HTMLInputElement>('[data-field="chat"]');
     if (!field) return;
@@ -871,7 +930,7 @@ export function mount(root: HTMLElement): void {
             <p class="brand">Texas 42</p>
             <p class="brand-sub">Hand ${game.handNumber} · first to ${target} ${matchUnit}${role === "local" && !lesson ? ` · ${botLevel} bots` : ""}</p>
           </div>
-          <div class="scoreline" aria-label="Match score">
+          <div class="scoreline ${spotClass("marks")}" data-spot="marks" aria-label="Match score">
             <span class="us"><small>You &amp; Partner</small><strong>${us}</strong></span>
             <span class="divider" aria-hidden="true"></span>
             <span class="them"><small>${escapeHtml(opponentsLabel())}</small><strong>${them}</strong></span>
@@ -894,7 +953,7 @@ export function mount(root: HTMLElement): void {
                   ${seatBlock(game, seatAt("w"), "west")}
                   <div class="trick-wrap">
                     <p class="status" aria-live="polite">${escapeHtml(lessonOver() ? "Lesson complete." : turnLine(game, me, names))}</p>
-                    <div class="trick">${trickSlots(game)}</div>
+                    <div class="trick ${spotClass("played")}" data-spot="played">${trickSlots(game)}</div>
                     <p class="contract">${escapeHtml(handBanner(game, me, names))}</p>
                     <p class="count-out">${escapeHtml(countOutLine(game))}</p>
                   </div>
@@ -910,7 +969,7 @@ export function mount(root: HTMLElement): void {
               ${dockHtml(game)}
             </div>
             ${yourBidRow(game, me)}
-            <div class="your-hand" aria-label="Your hand">
+            <div class="your-hand ${spotClass("hand")}" data-spot="hand" aria-label="Your hand">
               ${yourHandHtml(game)}
             </div>
           </section>
@@ -959,7 +1018,7 @@ export function mount(root: HTMLElement): void {
       )
       .join("");
     return `
-      <div class="seat seat-${place} ${active ? "active" : ""} ${reveal ? "open" : ""} ${teamOf(seat) === teamOf(me) ? "team-us" : "team-them"}">
+      <div class="seat seat-${place} ${active ? "active" : ""} ${reveal ? "open" : ""} ${teamOf(seat) === teamOf(me) ? "team-us" : "team-them"} ${spotClass(place === "north" ? "partner" : "opponents")}" data-spot="${place === "north" ? "partner" : "opponents"}">
         <div class="seat-stack">
           <div class="seat-tiles">${tiles}</div>
           ${bidChip(game, seat)}
@@ -1027,14 +1086,14 @@ export function mount(root: HTMLElement): void {
           return `<button type="button" class="${cls}" data-act="bid" data-amount="${amount}">${label}</button>`;
         })
         .join("");
-      return `<div class="bids" aria-label="Your bid">${buttons}</div>`;
+      return `<div class="bids ${spotClass("bids")}" data-spot="bids" aria-label="Your bid">${buttons}</div>`;
     }
     if (game.phase === "trump" && game.turn === me) {
       const buttons = TRUMP_BUTTONS.map(
         (item) =>
           `<button type="button" class="trump" data-act="trump" data-trump="${trumpKey(item.trump)}"><strong>${item.label}</strong><small>${item.hint}</small></button>`,
       ).join("");
-      return `<div class="trumps" aria-label="Name trump">${buttons}</div>`;
+      return `<div class="trumps ${spotClass("trumps")}" data-spot="trumps" aria-label="Name trump">${buttons}</div>`;
     }
     if (game.phase === "playing" && game.turn === me && selectedKey && legalKeys(game).has(selectedKey)) {
       return `<div class="play-row"><p class="dock-note">${escapeHtml(yourPlayLine(game, me))}</p><button type="button" class="primary play-go" data-act="play">Play ${selectedKey}</button></div>`;
@@ -1055,7 +1114,7 @@ export function mount(root: HTMLElement): void {
     const ours = game.completedTricks.filter((trick) => teamOf(trick.winner) === mine);
     const theirs = game.completedTricks.filter((trick) => teamOf(trick.winner) !== mine);
     return `
-      <div class="trick-board">
+      <div class="trick-board ${spotClass("tricks")}" data-spot="tricks">
         <section class="won theirs">
           <header>
             <h2>${escapeHtml(opponentsLabel())}</h2>
@@ -1094,7 +1153,7 @@ export function mount(root: HTMLElement): void {
 
   function trumpBadgeHtml(game: GameState): string {
     if (!game.trump) {
-      return `<aside class="trump-badge waiting" aria-label="Trump"><p class="trump-kicker">Trump</p><strong>Not named</strong></aside>`;
+      return `<aside class="trump-badge waiting ${spotClass("trump")}" data-spot="trump" aria-label="Trump"><p class="trump-kicker">Trump</p><strong>Not named</strong></aside>`;
     }
     const label = game.trump.kind === "followMe" ? "No Trump" : trumpName(game.trump);
     const icon =
@@ -1103,26 +1162,97 @@ export function mount(root: HTMLElement): void {
         : game.trump.kind === "suit"
           ? boneHtml({ hi: game.trump.suit, lo: game.trump.suit }, { size: "sm", trump: game.trump })
           : "";
-    return `<aside class="trump-badge" aria-live="polite" aria-label="Trump is ${label}"><p class="trump-kicker">Trump</p><strong>${escapeHtml(label)}</strong>${icon}</aside>`;
+    return `<aside class="trump-badge ${spotClass("trump")}" data-spot="trump" aria-live="polite" aria-label="Trump is ${label}"><p class="trump-kicker">Trump</p><strong>${escapeHtml(label)}</strong>${icon}</aside>`;
   }
 
   function coachHtml(): string {
-    if (!lesson) return "";
-    const beat = lesson.def.beats[lesson.beat];
-    const say = beat ? (beat.kind === "you" ? beat.say : "Watch the table.") : lesson.def.done;
-    const next = beat
-      ? ""
-      : `<div class="menu-actions">
+    const moment = coachMoment();
+    if (!lesson || !moment) return "";
+    const next = moment.showNext
+      ? `<button type="button" class="primary" data-act="guide-next">Next</button>`
+      : moment.spot === "done"
+        ? `<div class="menu-actions">
           <button type="button" class="primary" data-act="lesson" data-lesson="follow">Follow suit</button>
           <button type="button" class="ghost" data-act="lesson" data-lesson="count">Count the points</button>
-        </div>`;
+        </div>`
+        : "";
     return `
-      <section class="coach" aria-live="polite">
+      <section class="coach" data-coach="${moment.spot}" aria-live="polite">
         <p class="coach-kicker">${escapeHtml(lesson.def.title)}</p>
-        <p>${escapeHtml(say)}</p>
-        ${alertText ? `<p class="coach-hint">${escapeHtml(alertText)}</p>` : ""}
+        <p>${escapeHtml(moment.say)}</p>
+        ${alertText && !moment.showNext && moment.spot !== "done" ? `<p class="coach-hint">${escapeHtml(alertText)}</p>` : ""}
         ${next}
       </section>`;
+  }
+
+  function placeCoach(): void {
+    const coach = root.querySelector<HTMLElement>(".coach");
+    if (!coach) return;
+    if (window.innerWidth <= 720) {
+      coach.classList.add("coach-pinned", "coach-no-arrow");
+      coach.style.left = "";
+      coach.style.top = "";
+      return;
+    }
+    coach.classList.remove("coach-pinned");
+    const width = coach.offsetWidth;
+    const height = coach.offsetHeight;
+    const targets = Array.from(root.querySelectorAll<HTMLElement>("[data-spot].lit"));
+    const felt = root.querySelector<HTMLElement>(".felt");
+    if (targets.length === 0 && felt) {
+      const box = felt.getBoundingClientRect();
+      coach.style.left = `${Math.round(box.left + (box.width - width) / 2)}px`;
+      coach.style.top = `${Math.round(box.top + (box.height - height) / 2)}px`;
+      coach.classList.add("coach-no-arrow");
+      return;
+    }
+    const target = targets.reduce((best, item) => (item.getBoundingClientRect().left < best.getBoundingClientRect().left ? item : best));
+    const box = target.getBoundingClientRect();
+    const gap = 16;
+    const spots = [
+      { left: box.left + box.width / 2 - width / 2, top: box.top - height - gap },
+      { left: box.left + box.width / 2 - width / 2, top: box.bottom + gap },
+      { left: box.right + gap, top: box.top + box.height / 2 - height / 2 },
+      { left: box.left - width - gap, top: box.top + box.height / 2 - height / 2 },
+    ].map((spot) => ({
+      left: clamp(spot.left, 8, window.innerWidth - width - 8),
+      top: clamp(spot.top, 8, window.innerHeight - height - 8),
+    }));
+    const placed = spots
+      .map((spot) => ({ ...spot, hit: overlaps(spot, width, height, box) }))
+      .sort((a, b) => Number(a.hit) - Number(b.hit))[0]!;
+    coach.style.left = `${Math.round(placed.left)}px`;
+    coach.style.top = `${Math.round(placed.top)}px`;
+    coach.classList.remove("coach-no-arrow");
+    const placedBox = { left: placed.left, top: placed.top, right: placed.left + width, bottom: placed.top + height, width, height };
+    const tx = box.left + box.width / 2;
+    const ty = box.top + box.height / 2;
+    const cx = placedBox.left + width / 2;
+    const cy = placedBox.top + height / 2;
+    const dx = tx - cx;
+    const dy = ty - cy;
+    let arrowX = width / 2 - 7;
+    let arrowY = -8;
+    let turn = "-135deg";
+    if (Math.abs(dx) > Math.abs(dy)) {
+      arrowY = clamp(ty - placedBox.top - 7, 10, height - 24);
+      if (dx > 0) {
+        arrowX = width - 6;
+        turn = "-45deg";
+      } else {
+        arrowX = -8;
+        turn = "135deg";
+      }
+    } else {
+      arrowX = clamp(tx - placedBox.left - 7, 10, width - 24);
+      if (dy > 0) {
+        arrowY = height - 6;
+        turn = "45deg";
+      }
+    }
+    coach.style.setProperty("--arrow-x", `${Math.round(arrowX)}px`);
+    coach.style.setProperty("--arrow-y", `${Math.round(arrowY)}px`);
+    coach.style.setProperty("--arrow-turn", turn);
   }
 
   function overlayHtml(game: GameState): string {
@@ -1234,6 +1364,14 @@ export function mount(root: HTMLElement): void {
 
 function seatTitle(seat: Seat): string {
   return (["South", "West", "North", "East"] as const)[seat];
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
+}
+
+function overlaps(spot: { left: number; top: number }, width: number, height: number, box: DOMRect): boolean {
+  return !(spot.left + width < box.left || spot.left > box.right || spot.top + height < box.top || spot.top > box.bottom);
 }
 
 function matchSettings(seed?: number): MatchSettings {

@@ -40,4 +40,13 @@ describe("lessons", () => {
     expect(state.completedTricks).toHaveLength(1);
     expect(sameLessonAction({ type: "bid", amount: 30 }, { type: "bid", amount: "pass" })).toBe(false);
   });
+
+  it("points at the table before the scripted beats", () => {
+    const follow = lessonById("follow");
+    const count = lessonById("count");
+    expect(follow?.guide.map((step) => step.spot)).toEqual(["marks", "partner", "opponents", "trump", "tricks", "hand"]);
+    expect(count?.guide.map((step) => step.spot)).toEqual(["marks", "tricks", "hand"]);
+    const bid = follow?.beats.find((beat) => beat.kind === "you" && beat.action.type === "bid");
+    expect(bid && bid.kind === "you" ? bid.spot : "").toBe("bids");
+  });
 });
