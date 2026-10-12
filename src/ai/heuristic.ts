@@ -29,26 +29,41 @@ export function chooseAction(view: PlayerView, style: BotStyle = { margin: 1.25 
   throw new Error(`No decision for seat ${view.seat} in ${view.phase}`);
 }
 
-function chooseBid(view: PlayerView, style: BotStyle): number | "pass" {
-  const best = bestEstimate(view.hand);
-  const lock =
-    best.sureTricks >= 6 && best.trumpLength >= 5 && best.expected >= 40 && best.trump.kind !== "followMe";
-  if (lock && (view.highBid == null || view.highBid < 84)) return 84;
-  if (lock && view.highBid != null && view.highBid >= 84 && view.highBid < 168 && best.sureTricks >= 7) {
-    return view.highBid < 126 ? 126 : 168;
-  }
+/** Bids a chair is willing to say. 35 and 36 need both ten-count tiles. 42 is a run. */
+export const BID_BANDS = [30, 31, 32, 33, 35, 36, 42] as const;
 
-  let target = Math.round(best.expected - style.margin);
-  if (target > 36 && (best.sureTricks < 2 || best.trumpLength < 4)) target = 36;
-  if (target > 42) target = 42;
-  if (target >= 42 && best.expected < 44) target = 41;
-  let choice: number | "pass";
-  if (view.highBid == null) choice = target >= 30 ? target : "pass";
-  else if (target > view.highBid) choice = target;
-  else if (best.expected - style.margin >= view.highBid + 1 && view.highBid < 42) choice = view.highBid + 1;
-  else choice = "pass";
-  if (choice !== "pass" && !view.legalBids.includes(choice)) return "pass";
-  return choice;
+export function shapedBid(view: PlayerView, style: BotStyle): number | "pass" {
+  const best = bestEstimate(view.hand);
+  const amount = bidAmount(view.hand, best, style);
+  if (amount === "pass") return "pass";
+  if (view.highBid != null && amount <= view.highBid) return "pass";
+  if (!view.legalBids.includes(amount)) return "pass";
+  return amount;
+}
+
+function chooseBid(view: PlayerView, style: BotStyle): number | "pass" {
+  return shapedBid(view, style);
+}
+
+function bidAmount(hand: Domino[], best: ReturnType<typeof bestEstimate>, style: BotStyle): number | "pass" {
+  const strength = best.expected - style.margin;
+  const bothTens = hasKey(hand, "6-4") && hasKey(hand, "5-5");
+  const flawless =
+    best.sureTricks >= 6 && best.trumpLength >= 5 && strength >= 41 && best.trump.kind !== "followMe";
+  if (flawless) return 42;
+
+  let bid = 0;
+  if (strength >= 27) bid = 30;
+  if (strength >= 31 && best.trumpLength >= 3) bid = 31;
+  if (strength >= 34 && best.trumpLength >= 3 && best.sureTricks >= 1) bid = 32;
+  if (strength >= 36 && best.trumpLength >= 4 && best.sureTricks >= 2) bid = 33;
+  if (bothTens && best.trumpLength >= 4 && best.sureTricks >= 2 && strength >= 35) bid = 35;
+  if (bothTens && best.trumpLength >= 5 && best.sureTricks >= 3 && strength >= 38) bid = 36;
+  return bid >= 30 ? bid : "pass";
+}
+
+function hasKey(hand: Domino[], key: string): boolean {
+  return hand.some((domino) => dominoKey(domino) === key);
 }
 
 function choosePlay(view: PlayerView): Domino {
