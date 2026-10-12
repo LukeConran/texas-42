@@ -513,20 +513,35 @@ button.tile:disabled {
   display: flex;
   flex-direction: column;
 }
+.menu-room:has(.menu-layout:not(.with-aside)) {
+  position: relative;
+}
+.menu-room:has(.menu-layout:not(.with-aside)) > .topbar {
+  position: absolute;
+  inset: 0 0 auto 0;
+  z-index: 2;
+}
 .menu-layout {
   display: grid;
   grid-template-columns: min(440px, 100%);
-  align-content: start;
+  align-content: center;
   justify-content: center;
   flex: 1;
   gap: 18px;
   width: min(440px, 100%);
   margin: 0 auto;
-  padding: 8px 18px 48px;
+  padding: 80px 18px;
+  box-sizing: border-box;
+}
+.menu-layout:not(.with-aside) {
+  min-height: 100vh;
 }
 .menu-layout.with-aside {
   grid-template-columns: minmax(0, 440px) minmax(240px, 320px);
   width: min(780px, 100%);
+  align-content: start;
+  min-height: 0;
+  padding: 8px 18px 48px;
 }
 .menu-layout:has(.rules-card) {
   grid-template-columns: minmax(0, 440px) minmax(260px, 420px);
