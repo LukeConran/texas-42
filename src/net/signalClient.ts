@@ -74,11 +74,36 @@ export async function publishCandidate(
   await post({ op: "ice", code, guestId, from, candidate });
 }
 
-export async function enterRoom(code: string, name: string): Promise<string> {
-  const payload = await post({ op: "enter", code, name });
-  const guestId = payload.guestId;
-  if (typeof guestId !== "string") throw new Error("The room service did not accept the join.");
-  return guestId;
+export async function enterRoom(code: string, name: string, guestId?: string): Promise<string> {
+  const payload = await post({ op: "enter", code, name, guestId });
+  const id = payload.guestId;
+  if (typeof id !== "string") throw new Error("The room service did not accept the join.");
+  return id;
+}
+
+/** Tell the host this browser is going away without giving up the chair. */
+export function postAway(code: string, guestId: string, epoch: number): void {
+  const body = JSON.stringify({
+    op: "post",
+    code,
+    guestId,
+    box: "toHost",
+    body: JSON.stringify({ type: "away", epoch }),
+  });
+  try {
+    if (typeof navigator !== "undefined" && typeof navigator.sendBeacon === "function") {
+      const blob = new Blob([body], { type: "application/json" });
+      if (navigator.sendBeacon("/api/signal", blob)) return;
+    }
+  } catch {
+    // A normal request still carries the note when the beacon is blocked.
+  }
+  void fetch("/api/signal", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body,
+    keepalive: true,
+  }).catch(() => undefined);
 }
 
 export async function postMail(

@@ -20,6 +20,20 @@ describe("table talk", () => {
     expect(decode('{"type":"chat","text":""}')).toBeNull();
     expect(decode('{"type":"chat","text":12}')).toBeNull();
     expect(decode('{"type":"action","action":{"type":"bid","amount":"pass"}}')?.type).toBe("action");
+    expect(decode(JSON.stringify({ type: "away", epoch: 2 }))).toEqual({ type: "away", epoch: 2 });
+    expect(decode(JSON.stringify({ type: "rejoin", name: " Ada ", epoch: 3, seat: 3 }))).toEqual({
+      type: "rejoin",
+      name: "Ada",
+      epoch: 3,
+      seat: 3,
+    });
+    expect(decode('{"type":"away","epoch":0}')).toBeNull();
+    expect(decode('{"type":"rejoin","name":"Ada","epoch":1,"seat":9}')).toEqual({
+      type: "rejoin",
+      name: "Ada",
+      epoch: 1,
+      seat: null,
+    });
   });
 
   it("relays chat through the room mailbox and drops it when the room closes", async () => {
