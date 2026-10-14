@@ -81,6 +81,7 @@ export function mount(root: HTMLElement): void {
   let pace: Pace = "normal";
   let botLevel: BotLevel = "medium";
   let rulesOpen = false;
+  let settingsOpen = false;
   let placed = false;
   let state: GameState | null = null;
   let lesson: { def: Lesson; beat: number; guide: number; hold: boolean; sawTrick: boolean } | null = null;
@@ -170,10 +171,19 @@ export function mount(root: HTMLElement): void {
   });
 
   root.addEventListener("click", (event) => {
-    const target = (event.target as HTMLElement | null)?.closest<HTMLElement>("[data-act]");
-    if (!target || !root.contains(target)) return;
+    const raw = event.target as HTMLElement | null;
+    const insideSettings = Boolean(raw?.closest(".settings"));
+    const target = raw?.closest<HTMLElement>("[data-act]");
+    if (!target || !root.contains(target)) {
+      if (settingsOpen && !insideSettings) {
+        settingsOpen = false;
+        render();
+      }
+      return;
+    }
     const act = target.dataset.act;
     if (act === "seat" || act === "chat-form") return;
+    if (settingsOpen && !insideSettings) settingsOpen = false;
     if (act === "online") {
       menuNote = "";
       screen = "online";
@@ -199,8 +209,14 @@ export function mount(root: HTMLElement): void {
     else if (act === "join") void startJoin();
     else if (act === "deal-online") startOnlineMatch();
     else if (act === "copy") void copyLink();
-    else if (act === "menu") leaveTable();
-    else if (act === "rules") rulesOpen = !rulesOpen;
+    else if (act === "settings") settingsOpen = !settingsOpen;
+    else if (act === "menu") {
+      settingsOpen = false;
+      leaveTable();
+    } else if (act === "rules") {
+      settingsOpen = false;
+      rulesOpen = !rulesOpen;
+    }
     else if (act === "close-rules") rulesOpen = false;
     else if (act === "hands" && role === "local") showHands = !showHands;
     else if (act === "sound") soundOn = !soundOn;
@@ -225,6 +241,11 @@ export function mount(root: HTMLElement): void {
   });
 
   render();
+  window.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape" || !settingsOpen) return;
+    settingsOpen = false;
+    render();
+  });
 
   function startMatch(): void {
     stopNet();
@@ -238,6 +259,7 @@ export function mount(root: HTMLElement): void {
     selectedKey = null;
     screen = "table";
     rulesOpen = false;
+    settingsOpen = false;
     blip(660, 0.03);
     render();
     queue();
@@ -417,6 +439,7 @@ export function mount(root: HTMLElement): void {
     alertText = "";
     screen = "table";
     rulesOpen = false;
+    settingsOpen = false;
     pumpLesson();
   }
 
@@ -783,6 +806,7 @@ export function mount(root: HTMLElement): void {
     showHands = false;
     screen = "table";
     rulesOpen = false;
+    settingsOpen = false;
     blip(660, 0.03);
     broadcast();
     render();
@@ -998,14 +1022,7 @@ export function mount(root: HTMLElement): void {
             <span class="divider" aria-hidden="true"></span>
             <span class="them"><small>${escapeHtml(opponentsLabel())}</small><strong>${them}</strong></span>
           </div>
-          <div class="tools">
-            ${role === "guest" || lesson ? "" : botButtons()}
-            ${role === "guest" ? "" : paceButtons()}
-            ${handsButton}
-            <button type="button" class="tool ${soundOn ? "on" : ""}" data-act="sound">${soundOn ? "Sound on" : "Sound off"}</button>
-            <button type="button" class="tool" data-act="rules">Rules</button>
-            <button type="button" class="tool" data-act="menu">Leave</button>
-          </div>
+          ${settingsHtml(handsButton)}
         </header>
         <div class="play">
           <section class="table-column">
@@ -1047,6 +1064,36 @@ export function mount(root: HTMLElement): void {
         ${overlayHtml(game)}
         ${rulesOpen ? `<div class="rules-pop" role="dialog" aria-label="Rules"><button type="button" class="tool close-rules" data-act="close-rules">Close</button>${RULES_HTML}</div>` : ""}
       </div>`;
+  }
+
+  function settingsHtml(handsButton: string): string {
+    const bots = role === "guest" || lesson ? "" : `<p class="settings-label">Bots</p><div class="choice-row">${botButtons()}</div>`;
+    const speed = role === "guest" ? "" : `<p class="settings-label">Speed</p><div class="choice-row">${paceButtons()}</div>`;
+    const open = settingsOpen ? "on" : "";
+    return `
+      <div class="settings">
+        <button type="button" class="tool settings-toggle ${open}" data-act="settings" aria-expanded="${settingsOpen ? "true" : "false"}" aria-haspopup="dialog" aria-label="Settings">
+          ${settingsIcon()}
+        </button>
+        ${
+          settingsOpen
+            ? `<div class="settings-pop" role="dialog" aria-label="Settings">
+                ${bots}
+                ${speed}
+                <div class="settings-actions">
+                  ${handsButton}
+                  <button type="button" class="tool ${soundOn ? "on" : ""}" data-act="sound">${soundOn ? "Sound on" : "Sound off"}</button>
+                  <button type="button" class="tool" data-act="rules">Rules</button>
+                  <button type="button" class="tool settings-leave" data-act="menu">Leave</button>
+                </div>
+              </div>`
+            : ""
+        }
+      </div>`;
+  }
+
+  function settingsIcon(): string {
+    return `<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="currentColor" d="M19.14 12.94c.04-.31.06-.63.06-.94s-.02-.63-.06-.94l2.03-1.58a.5.5 0 0 0 .12-.64l-1.92-3.32a.5.5 0 0 0-.6-.22l-2.39.96a7.2 7.2 0 0 0-1.63-.94l-.36-2.54a.5.5 0 0 0-.49-.42h-3.84a.5.5 0 0 0-.49.42l-.36 2.54c-.59.22-1.14.54-1.63.94l-2.39-.96a.5.5 0 0 0-.6.22L2.71 8.84a.5.5 0 0 0 .12.64l2.03 1.58c-.04.31-.06.63-.06.94s.02.63.06.94l-2.03 1.58a.5.5 0 0 0-.12.64l1.92 3.32c.13.22.39.31.6.22l2.39-.96c.49.4 1.04.72 1.63.94l.36 2.54c.05.24.26.42.49.42h3.84c.23 0 .44-.18.49-.42l.36-2.54c.59-.22 1.14-.54 1.63-.94l2.39.96c.22.09.47 0 .6-.22l1.92-3.32a.5.5 0 0 0-.12-.64l-2.03-1.58zM12 15.5A3.5 3.5 0 1 1 12 8.5a3.5 3.5 0 0 1 0 7z"/></svg>`;
   }
 
   function botButtons(): string {
