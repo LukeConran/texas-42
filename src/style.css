@@ -67,7 +67,37 @@ h1, h2, h3, .brand, .scoreline strong, .result-card h2 {
 .scoreline .them strong { color: var(--clay); }
 .scoreline .divider { width: 1px; height: 28px; background: rgba(244, 236, 223, 0.2); }
 
-.tools { display: flex; flex-wrap: wrap; gap: 6px; }
+.settings { position: relative; z-index: 6; margin-left: auto; }
+.settings-toggle {
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  padding: 0;
+}
+.settings-pop {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 6;
+  width: min(280px, calc(100vw - 24px));
+  padding: 12px;
+  display: grid;
+  gap: 8px;
+  border-radius: 16px;
+  background: rgba(28, 20, 16, 0.96);
+  border: 1px solid rgba(230, 194, 122, 0.35);
+  box-shadow: var(--shadow);
+}
+.settings-label {
+  margin: 2px 0 0;
+  color: var(--muted);
+  font-size: 0.72rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.settings-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.settings-leave { border-color: rgba(224, 138, 98, 0.7); }
 .tool, .ghost, .choice, .check {
   background: transparent;
   border: 1px solid rgba(244, 236, 223, 0.25);
@@ -754,6 +784,7 @@ legend { margin-bottom: 8px; color: var(--gold); }
   .room:has(.coach) .play { padding-bottom: 230px; }
   .topbar { padding-inline: 12px; }
   .scoreline { order: 3; width: 100%; justify-content: center; }
+  .settings { order: 2; }
   .bone-lg { width: 48px; height: 90px; }
   .middle { grid-template-columns: 72px minmax(0, 1fr) 72px; }
   .status { width: min(132px, 48%); font-size: 0.92rem; padding: 5px 8px; }
